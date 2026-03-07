@@ -1,9 +1,8 @@
 """
 Topic lookup: discovers candidate topics from Wikipedia.
-Replaces Doc2Vec.most_similar() from main_2020.py.
-
-Phase 1: Uses Wikipedia API search + embedding comparison.
-Phase 3: Will upgrade to Azure AI Search vector index.
+More aggressive search strategy: uses entity combinations to find
+rich compound topic titles like "Russian espionage", "nerve agent attack",
+"military intelligence" instead of just raw entity names.
 """
 
 import httpx
@@ -13,10 +12,7 @@ import numpy as np
 
 
 async def search_wikipedia(query: str, limit: int = 10) -> list[dict]:
-    """
-    Search Wikipedia for articles related to the query.
-    Returns list of {title, snippet, url}.
-    """
+    """Search Wikipedia for articles related to the query."""
     url = "https://en.wikipedia.org/w/api.php"
     params = {
         "action": "query",
@@ -26,20 +22,21 @@ async def search_wikipedia(query: str, limit: int = 10) -> list[dict]:
         "format": "json",
         "srprop": "snippet",
     }
-
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(url, params=params)
-        data = response.json()
-
-    results = []
-    for item in data.get("query", {}).get("search", []):
-        title = item["title"]
-        results.append({
-            "title": title,
-            "snippet": item.get("snippet", ""),
-            "url": f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
-        })
-    return results
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(url, params=params)
+            data = response.json()
+        results = []
+        for item in data.get("query", {}).get("search", []):
+            title = item["title"]
+            results.append({
+                "title": title,
+                "snippet": item.get("snippet", ""),
+                "url": f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
+            })
+        return results
+    except Exception:
+        return []
 
 
 async def find_candidate_topics(
@@ -49,37 +46,44 @@ async def find_candidate_topics(
     max_candidates: int = 60,
 ) -> list[dict]:
     """
-    Find candidate topics from multiple sources:
-    1. Entity-linked Wikipedia articles (from Azure AI Language)
-    2. Wikipedia search using article keywords
-    3. Wikipedia search using top entities
-
-    Returns list of {title, source, wikipedia_url, similarity}.
+    Find candidate topics from multiple sources.
+    More aggressive search strategy with entity combinations.
     """
     candidates = {}
 
-    # Source 1: Entity-linked Wikipedia articles (highest quality)
+    # Source 1: Entity-linked Wikipedia articles
     for link in entity_links:
         title = link["name"]
-        if title.lower() not in candidates:
-            candidates[title.lower()] = {
+        key = title.lower()
+        if key not in candidates:
+            candidates[key] = {
                 "title": title,
                 "source": "entity_link",
                 "wikipedia_url": link.get("wikipedia_url", ""),
                 "base_score": link["confidence"],
             }
 
-    # Source 2: Wikipedia search using top entities as queries
-    top_entities = [e["name"] for e in entities[:8]]
-
+    # Source 2: Wikipedia search with individual top entities
+    top_entities = [e["name"] for e in entities[:10]]
     search_tasks = []
+
     for entity_name in top_entities:
         search_tasks.append(search_wikipedia(entity_name, limit=8))
 
-    # Also search with combinations of top 2 entities
+    # Source 3: Wikipedia search with COMBINATIONS of entities
+    # This is what finds compound topics like "Russian espionage",
+    # "nerve agent attack", "military intelligence"
     if len(top_entities) >= 2:
-        combo_query = f"{top_entities[0]} {top_entities[1]}"
-        search_tasks.append(search_wikipedia(combo_query, limit=10))
+        for i in range(min(5, len(top_entities))):
+            for j in range(i + 1, min(6, len(top_entities))):
+                combo = f"{top_entities[i]} {top_entities[j]}"
+                search_tasks.append(search_wikipedia(combo, limit=5))
+
+    # Source 4: Search with 3-entity combinations for broader coverage
+    if len(top_entities) >= 3:
+        for i in range(min(3, len(top_entities))):
+            combo3 = f"{top_entities[i]} {top_entities[min(i+1, len(top_entities)-1)]} {top_entities[min(i+2, len(top_entities)-1)]}"
+            search_tasks.append(search_wikipedia(combo3, limit=5))
 
     # Run all searches concurrently
     search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
@@ -94,10 +98,10 @@ async def find_candidate_topics(
                     "title": item["title"],
                     "source": "wikipedia_search",
                     "wikipedia_url": item.get("url", ""),
-                    "base_score": 0.5,  # neutral score, will be refined by embedding
+                    "base_score": 0.5,
                 }
 
-    # Source 3: Entities themselves as candidate topics
+    # Source 5: Entities themselves as candidates
     for entity in entities[:15]:
         key = entity["name"].lower()
         if key not in candidates:
@@ -109,26 +113,20 @@ async def find_candidate_topics(
             }
 
     candidate_list = list(candidates.values())
-
-    # Now rank candidates by embedding similarity to the article
-    if len(candidate_list) == 0:
+    if not candidate_list:
         return []
 
-    # Embed article and all candidate titles
+    # Rank by embedding similarity to article
     texts_to_embed = [article_text] + [c["title"] for c in candidate_list]
     embeddings = embed_texts(texts_to_embed)
 
     article_embedding = embeddings[0]
     candidate_embeddings = embeddings[1:]
 
-    # Score each candidate
     for i, candidate in enumerate(candidate_list):
         sim = cosine_similarity(article_embedding, candidate_embeddings[i])
-        # Blend embedding similarity with base score
         candidate["similarity"] = float(sim * 0.7 + candidate["base_score"] * 0.3)
-        candidate["embedding_index"] = i
 
-    # Sort by similarity and take top N
     candidate_list.sort(key=lambda c: c["similarity"], reverse=True)
     candidate_list = candidate_list[:max_candidates]
 
