@@ -1,27 +1,61 @@
 """
-Distance matrix computation, t-SNE dimension reduction, and scaling.
-t-SNE replaces PCA because Azure OpenAI cosine distances are compressed
-into a narrow band (0.05-0.25). t-SNE amplifies small differences into
-large visual gaps, creating the island archipelago effect naturally.
+Distance matrix, t-SNE reduction, force repulsion, power-curve scaling.
 """
 
 from sklearn.manifold import TSNE
-from backend.pipeline.embeddings import embed_texts, cosine_distance_matrix
+from backend.pipeline.embeddings import embed_texts, cosine_distance_matrix, cosine_similarity
 import numpy as np
+
+
+def force_directed_repulsion(candidates, iterations=500, min_distance=0.08, repulsion=0.001, damping=0.92, center_pull=0.0003):
+    """Push overlapping topics apart. Creates water channels between islands."""
+    pts = [{"x": c["x"], "y": c["y"], "vx": 0, "vy": 0, "size": c.get("size", 0.05)} for c in candidates]
+
+    for _ in range(iterations):
+        for p in pts:
+            p["fx"] = 0
+            p["fy"] = 0
+
+        for i in range(len(pts)):
+            for j in range(i + 1, len(pts)):
+                dx = pts[i]["x"] - pts[j]["x"]
+                dy = pts[i]["y"] - pts[j]["y"]
+                dist = max(np.sqrt(dx * dx + dy * dy), 0.001)
+                min_d = min_distance + (pts[i]["size"] + pts[j]["size"]) * 1.2
+
+                if dist < min_d:
+                    force = repulsion * (min_d - dist) / dist
+                    pts[i]["fx"] += dx * force
+                    pts[i]["fy"] += dy * force
+                    pts[j]["fx"] -= dx * force
+                    pts[j]["fy"] -= dy * force
+
+        for p in pts:
+            p["fx"] -= p["x"] * center_pull
+            p["fy"] -= p["y"] * center_pull
+            p["vx"] = (p["vx"] + p["fx"]) * damping
+            p["vy"] = (p["vy"] + p["fy"]) * damping
+            p["x"] += p["vx"]
+            p["y"] += p["vy"]
+
+    for i, c in enumerate(candidates):
+        c["x"] = pts[i]["x"]
+        c["y"] = pts[i]["y"]
+    return candidates
 
 
 def compute_distance_and_reduce(
     candidates: list[dict],
     article_text: str,
+    entities_text: str = "",
     spacing_multiplier: float = 2.8,
     radius_multiplier: float = 2.2,
-) -> list[dict]:
+) -> dict:
     """
-    1. Embed all candidate titles
-    2. Build cosine distance matrix
-    3. t-SNE to 2D (replaces PCA — amplifies narrow distance bands)
-    4. Apply spacing multiplier
-    5. Power-curve stretch for sizes and heights
+    Returns dict with:
+      - candidates: list with x, y, size, height added
+      - distance_matrix: raw cosine distance matrix
+      - debug: per-candidate debug info
     """
     if len(candidates) < 2:
         for c in candidates:
@@ -29,14 +63,22 @@ def compute_distance_and_reduce(
             c["y"] = 0.0
             c["size"] = c.get("similarity", 0.5) * 0.06 * radius_multiplier
             c["height"] = c.get("similarity", 0.5)
-        return candidates
+        return {"candidates": candidates, "distance_matrix": [], "debug": []}
 
     titles = [c["title"] for c in candidates]
     embeddings = embed_texts(titles)
     dist_matrix = cosine_distance_matrix(embeddings)
 
-    # ── t-SNE dimension reduction ────────────────────────────────
-    # perplexity must be less than n_samples
+    # Also embed entities text for height calculation
+    if entities_text.strip():
+        entities_emb = embed_texts([entities_text])[0]
+    else:
+        entities_emb = None
+
+    # Also embed the article
+    article_emb = embed_texts([article_text])[0]
+
+    # ── t-SNE ────────────────────────────────────────────────────
     n = len(candidates)
     perplexity = min(10, max(2, n // 3))
 
@@ -51,50 +93,103 @@ def compute_distance_and_reduce(
     )
     coords = tsne.fit_transform(dist_matrix)
 
-    # Normalize coords to roughly -1 to 1 range before spacing
     max_abs = np.max(np.abs(coords))
     if max_abs > 0:
         coords = coords / max_abs
 
-    # ── Power-curve stretch for size and height ──────────────────
-    # Raw similarity scores from Azure OpenAI cluster in a narrow band
-    # (e.g. 0.45-0.59). Power curve amplifies small differences.
-    #
-    # score^3 turns:  0.45, 0.50, 0.55, 0.59
-    # into:           0.091, 0.125, 0.166, 0.205  (2.25x spread vs 1.3x)
+    # ── Compute raw scores ───────────────────────────────────────
     POWER = 3.0
 
-    sims = np.array([c.get("similarity", 0.01) for c in candidates])
-    relevances = np.array([c.get("tfidf_relevance", c.get("similarity", 0.01)) for c in candidates])
+    debug_info = []
 
-    # Apply power curve
-    sims_stretched = np.power(sims, POWER)
-    rel_stretched = np.power(np.maximum(sims, relevances), POWER)
+    for i, candidate in enumerate(candidates):
+        sim_article = float(cosine_similarity(embeddings[i], article_emb))
+        sim_entities = float(cosine_similarity(embeddings[i], entities_emb)) if entities_emb is not None else 0.0
+        tfidf_rel = candidate.get("tfidf_relevance", 0.0)
 
-    # Normalize to 0-1 range
-    sim_min, sim_max = sims_stretched.min(), sims_stretched.max()
-    if sim_max > sim_min:
-        sims_norm = (sims_stretched - sim_min) / (sim_max - sim_min)
-    else:
-        sims_norm = np.ones_like(sims_stretched) * 0.5
+        # Height based on similarity to ENTITIES (not full article)
+        # This matches your original algorithm: relevance = cosine_sim(title, entities)
+        # Falls back to article sim if no entities
+        raw_height = max(sim_entities, sim_article * 0.5, tfidf_rel)
 
-    rel_min, rel_max = rel_stretched.min(), rel_stretched.max()
-    if rel_max > rel_min:
-        rel_norm = (rel_stretched - rel_min) / (rel_max - rel_min)
-    else:
-        rel_norm = np.ones_like(rel_stretched) * 0.5
+        candidate["_sim_article"] = sim_article
+        candidate["_sim_entities"] = sim_entities
+        candidate["_tfidf"] = tfidf_rel
+        candidate["_raw_height"] = raw_height
+        candidate["_raw_sim"] = candidate.get("similarity", 0.0)
 
-    # ── Assign values ────────────────────────────────────────────
+    # ── Power-curve stretch ──────────────────────────────────────
+    raw_sims = np.array([c["_raw_sim"] for c in candidates])
+    raw_heights = np.array([c["_raw_height"] for c in candidates])
+
+    sims_stretched = np.power(np.clip(raw_sims, 0.001, 1.0), POWER)
+    heights_stretched = np.power(np.clip(raw_heights, 0.001, 1.0), POWER)
+
+    # Normalize to 0-1
+    def norm01(arr):
+        mn, mx = arr.min(), arr.max()
+        if mx > mn:
+            return (arr - mn) / (mx - mn)
+        return np.ones_like(arr) * 0.5
+
+    sims_norm = norm01(sims_stretched)
+    heights_norm = norm01(heights_stretched)
+
+    # ── Assign positions, sizes, heights ─────────────────────────
     for i, candidate in enumerate(candidates):
         candidate["x"] = float(coords[i, 0]) * spacing_multiplier
         candidate["y"] = float(coords[i, 1]) * spacing_multiplier
 
-        # Size: map from power-stretched similarity
-        # Range matches v3: smallest ~0.02, largest ~0.09 (before radius mult)
+        # Size: 0.02 to 0.09 range (before radius multiplier)
         candidate["size"] = float(0.02 + sims_norm[i] * 0.07) * radius_multiplier
 
-        # Height: map from power-stretched relevance
-        # Range matches v3: 0.038 to 0.28
-        candidate["height"] = float(rel_norm[i])
+        # Height: 0 to 1 (will be normalized to v3 range on frontend)
+        candidate["height"] = float(heights_norm[i])
 
-    return candidates
+        debug_info.append({
+            "title": candidate["title"],
+            "source": candidate.get("source", ""),
+            "sim_article": round(candidate["_sim_article"], 4),
+            "sim_entities": round(candidate["_sim_entities"], 4),
+            "tfidf": round(candidate["_tfidf"], 4),
+            "raw_height": round(candidate["_raw_height"], 4),
+            "final_height": round(candidate["height"], 4),
+            "final_size": round(candidate["size"], 4),
+            "x": round(candidate["x"], 4),
+            "y": round(candidate["y"], 4),
+        })
+
+    # ── Force repulsion — push apart for water channels ──────────
+    candidates = force_directed_repulsion(
+        candidates,
+        iterations=500,
+        min_distance=0.08,
+        repulsion=0.001,
+        damping=0.92,
+        center_pull=0.0003,
+    )
+
+    # Update debug with post-repulsion positions
+    for i, d in enumerate(debug_info):
+        d["x_final"] = round(candidates[i]["x"], 4)
+        d["y_final"] = round(candidates[i]["y"], 4)
+
+    # Build serializable distance matrix
+    dm_list = []
+    topic_labels = [c["title"] for c in candidates]
+    for i in range(len(candidates)):
+        row = {}
+        for j in range(len(candidates)):
+            row[topic_labels[j]] = round(float(dist_matrix[i][j]), 4)
+        dm_list.append({"topic": topic_labels[i], "distances": row})
+
+    # Clean up temp fields
+    for c in candidates:
+        for k in ["_sim_article", "_sim_entities", "_tfidf", "_raw_height", "_raw_sim"]:
+            c.pop(k, None)
+
+    return {
+        "candidates": candidates,
+        "distance_matrix": dm_list,
+        "debug": debug_info,
+    }
