@@ -1,54 +1,13 @@
 """
-Distance matrix computation, PCA dimension reduction, force repulsion, and spacing.
+Distance matrix computation, t-SNE dimension reduction, and scaling.
+t-SNE replaces PCA because Azure OpenAI cosine distances are compressed
+into a narrow band (0.05-0.25). t-SNE amplifies small differences into
+large visual gaps, creating the island archipelago effect naturally.
 """
 
-from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 from backend.pipeline.embeddings import embed_texts, cosine_distance_matrix
 import numpy as np
-
-
-def force_directed_repulsion(candidates, iterations=300, min_distance=0.04, repulsion=0.0005, damping=0.93, center_pull=0.0005):
-    """
-    Push overlapping topics apart while preserving relative positions.
-    Same algorithm as v2 prototype.
-    Creates water channels between topic islands.
-    """
-    pts = [{"x": c["x"], "y": c["y"], "vx": 0, "vy": 0, "size": c.get("size", 0.05)} for c in candidates]
-
-    for _ in range(iterations):
-        for p in pts:
-            p["fx"] = 0
-            p["fy"] = 0
-
-        for i in range(len(pts)):
-            for j in range(i + 1, len(pts)):
-                dx = pts[i]["x"] - pts[j]["x"]
-                dy = pts[i]["y"] - pts[j]["y"]
-                dist = max(np.sqrt(dx * dx + dy * dy), 0.001)
-                min_d = min_distance + (pts[i]["size"] + pts[j]["size"]) * 0.8
-
-                if dist < min_d:
-                    force = repulsion * (min_d - dist) / dist
-                    fx = dx * force
-                    fy = dy * force
-                    pts[i]["fx"] += fx
-                    pts[i]["fy"] += fy
-                    pts[j]["fx"] -= fx
-                    pts[j]["fy"] -= fy
-
-        for p in pts:
-            p["fx"] -= p["x"] * center_pull
-            p["fy"] -= p["y"] * center_pull
-            p["vx"] = (p["vx"] + p["fx"]) * damping
-            p["vy"] = (p["vy"] + p["fy"]) * damping
-            p["x"] += p["vx"]
-            p["y"] += p["vy"]
-
-    for i, c in enumerate(candidates):
-        c["x"] = pts[i]["x"]
-        c["y"] = pts[i]["y"]
-
-    return candidates
 
 
 def compute_distance_and_reduce(
@@ -59,14 +18,13 @@ def compute_distance_and_reduce(
 ) -> list[dict]:
     """
     1. Embed all candidate titles
-    2. Build cosine distance matrix (replaces WMD)
-    3. PCA to 2D
-    4. Force-directed repulsion to spread topics apart
-    5. Apply spacing multiplier
-    6. Compute sizes and heights
+    2. Build cosine distance matrix
+    3. t-SNE to 2D (replaces PCA — amplifies narrow distance bands)
+    4. Apply spacing multiplier
+    5. Power-curve stretch for sizes and heights
     """
     if len(candidates) < 2:
-        for i, c in enumerate(candidates):
+        for c in candidates:
             c["x"] = 0.0
             c["y"] = 0.0
             c["size"] = c.get("similarity", 0.5) * 0.06 * radius_multiplier
@@ -75,36 +33,68 @@ def compute_distance_and_reduce(
 
     titles = [c["title"] for c in candidates]
     embeddings = embed_texts(titles)
-
     dist_matrix = cosine_distance_matrix(embeddings)
 
-    n_components = min(2, len(candidates) - 1)
-    pca = PCA(n_components=n_components)
-    pca.fit(dist_matrix)
-    coords = pca.components_
+    # ── t-SNE dimension reduction ────────────────────────────────
+    # perplexity must be less than n_samples
+    n = len(candidates)
+    perplexity = min(10, max(2, n // 3))
 
-    if n_components == 1:
-        coords = np.vstack([coords, np.zeros_like(coords[0])])
-
-    max_sim = max(c.get("similarity", 0.01) for c in candidates)
-
-    for i, candidate in enumerate(candidates):
-        sim = candidate.get("similarity", 0.01)
-        relevance = candidate.get("tfidf_relevance", sim)
-
-        candidate["x"] = float(coords[0][i]) * spacing_multiplier
-        candidate["y"] = float(coords[1][i]) * spacing_multiplier
-        candidate["size"] = float(sim * 0.06 * radius_multiplier)
-        candidate["height"] = float(max(sim, relevance))
-
-    # ── FORCE REPULSION — push overlapping topics apart ──────────
-    candidates = force_directed_repulsion(
-        candidates,
-        iterations=400,
-        min_distance=0.06,
-        repulsion=0.0006,
-        damping=0.93,
-        center_pull=0.0005,
+    tsne = TSNE(
+        n_components=2,
+        perplexity=perplexity,
+        metric="precomputed",
+        init="random",
+        random_state=42,
+        n_iter=1000,
+        learning_rate="auto",
     )
+    coords = tsne.fit_transform(dist_matrix)
+
+    # Normalize coords to roughly -1 to 1 range before spacing
+    max_abs = np.max(np.abs(coords))
+    if max_abs > 0:
+        coords = coords / max_abs
+
+    # ── Power-curve stretch for size and height ──────────────────
+    # Raw similarity scores from Azure OpenAI cluster in a narrow band
+    # (e.g. 0.45-0.59). Power curve amplifies small differences.
+    #
+    # score^3 turns:  0.45, 0.50, 0.55, 0.59
+    # into:           0.091, 0.125, 0.166, 0.205  (2.25x spread vs 1.3x)
+    POWER = 3.0
+
+    sims = np.array([c.get("similarity", 0.01) for c in candidates])
+    relevances = np.array([c.get("tfidf_relevance", c.get("similarity", 0.01)) for c in candidates])
+
+    # Apply power curve
+    sims_stretched = np.power(sims, POWER)
+    rel_stretched = np.power(np.maximum(sims, relevances), POWER)
+
+    # Normalize to 0-1 range
+    sim_min, sim_max = sims_stretched.min(), sims_stretched.max()
+    if sim_max > sim_min:
+        sims_norm = (sims_stretched - sim_min) / (sim_max - sim_min)
+    else:
+        sims_norm = np.ones_like(sims_stretched) * 0.5
+
+    rel_min, rel_max = rel_stretched.min(), rel_stretched.max()
+    if rel_max > rel_min:
+        rel_norm = (rel_stretched - rel_min) / (rel_max - rel_min)
+    else:
+        rel_norm = np.ones_like(rel_stretched) * 0.5
+
+    # ── Assign values ────────────────────────────────────────────
+    for i, candidate in enumerate(candidates):
+        candidate["x"] = float(coords[i, 0]) * spacing_multiplier
+        candidate["y"] = float(coords[i, 1]) * spacing_multiplier
+
+        # Size: map from power-stretched similarity
+        # Range matches v3: smallest ~0.02, largest ~0.09 (before radius mult)
+        candidate["size"] = float(0.02 + sims_norm[i] * 0.07) * radius_multiplier
+
+        # Height: map from power-stretched relevance
+        # Range matches v3: 0.038 to 0.28
+        candidate["height"] = float(rel_norm[i])
 
     return candidates
