@@ -1,73 +1,70 @@
 """
-Named Entity Recognition + Entity Linking using Azure AI Language.
-Replaces Google Cloud NLP from main_2020.py.
+Named Entity Recognition using spaCy.
+No API calls, no size limits, no cost.
 """
 
-from azure.ai.textanalytics import TextAnalyticsClient
-from azure.core.credentials import AzureKeyCredential
-from backend.config import settings
+import spacy
+
+_nlp = None
+
+def get_nlp():
+    global _nlp
+    if _nlp is None:
+        try:
+            _nlp = spacy.load("en_core_web_lg")
+        except OSError:
+            try:
+                _nlp = spacy.load("en_core_web_sm")
+            except OSError:
+                import subprocess
+                subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"], check=True)
+                _nlp = spacy.load("en_core_web_sm")
+    return _nlp
 
 
-def get_client() -> TextAnalyticsClient:
-    return TextAnalyticsClient(
-        endpoint=settings.azure_language_endpoint,
-        credential=AzureKeyCredential(settings.azure_language_key),
-    )
-
-
-def extract_entities(text: str, min_confidence: float = 0.4) -> list[dict]:
+def extract_entities(text: str) -> list[dict]:
     """
-    Extract named entities from text using Azure AI Language NER.
-    Returns list of {name, type, confidence} sorted by confidence desc.
+    Extract named entities using spaCy.
+    No document size limit. No API calls.
     """
-    client = get_client()
-    result = client.recognize_entities(documents=[{"id": "1", "text": text}])[0]
+    nlp = get_nlp()
+    doc = nlp(text)
 
-    if result.is_error:
-        raise RuntimeError(f"NER error: {result.error.message}")
+    entity_data = {}
+    skip_types = {"CARDINAL", "ORDINAL", "QUANTITY", "PERCENT", "MONEY", "TIME", "DATE"}
 
+    for ent in doc.ents:
+        key = ent.text.strip().lower()
+        if len(key) < 2 or ent.label_ in skip_types:
+            continue
+
+        if key not in entity_data:
+            entity_data[key] = {
+                "name": ent.text.strip(),
+                "type": ent.label_,
+                "count": 0,
+                "first_pos": ent.start_char,
+            }
+        entity_data[key]["count"] += 1
+
+    total_chars = max(len(text), 1)
     entities = []
-    seen = set()
-    for entity in result.entities:
-        if entity.confidence_score >= min_confidence and entity.text.lower() not in seen:
-            seen.add(entity.text.lower())
-            entities.append({
-                "name": entity.text,
-                "type": entity.category,
-                "subtype": entity.subcategory or "",
-                "confidence": entity.confidence_score,
-            })
+    for data in entity_data.values():
+        pos_score = 1.0 - (data["first_pos"] / total_chars) * 0.3
+        freq_score = min(data["count"] / 5.0, 1.0)
+        confidence = round(freq_score * 0.6 + pos_score * 0.4, 3)
 
-    # Sort by confidence descending
+        entities.append({
+            "name": data["name"],
+            "type": data["type"],
+            "subtype": "",
+            "confidence": confidence,
+        })
+
     entities.sort(key=lambda e: e["confidence"], reverse=True)
     return entities
 
 
 def extract_entity_links(text: str) -> list[dict]:
-    """
-    Entity Linking: identifies entities and links them to Wikipedia.
-    Returns list of {name, wikipedia_url, confidence, data_source}.
-    This directly feeds the referential framework.
-    """
-    client = get_client()
-    result = client.recognize_linked_entities(documents=[{"id": "1", "text": text}])[0]
-
-    if result.is_error:
-        raise RuntimeError(f"Entity Linking error: {result.error.message}")
-
-    links = []
-    seen = set()
-    for entity in result.entities:
-        if entity.name.lower() not in seen:
-            seen.add(entity.name.lower())
-            # Get highest confidence match
-            best_match = max(entity.matches, key=lambda m: m.confidence_score)
-            links.append({
-                "name": entity.name,
-                "wikipedia_url": entity.url or "",
-                "confidence": best_match.confidence_score,
-                "data_source": entity.data_source or "Wikipedia",
-            })
-
-    links.sort(key=lambda l: l["confidence"], reverse=True)
-    return links
+    """Stub — returns empty list. Wikipedia linking disabled for now."""
+    return []
