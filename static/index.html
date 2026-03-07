@@ -149,8 +149,30 @@ let TOPICS = [];
 let currentMode = '2d';
 let hoveredIdx = -1, selectedIdx = -1;
 let animFrame = null;
-let maxH = 1;
+let maxH = 0.28;  // Will be set after normalization
 const API_BASE = window.location.origin;
+
+// ═══════════════════════════════════════════════════════════════════════
+// V3 REFERENCE VALUES — these are the exact ratios that produced
+// the good-looking terrain. All normalization targets these.
+//
+// V3 data:
+//   positions:  -0.448 to 0.700 (after 2.8x spacing on -0.16 to 0.25 raw)
+//   sizes:      0.044 to 0.198  (after 2.2x radius on 0.02 to 0.09 raw)
+//   heights:    0.038 to 0.280  (RAW — NOT normalized to 0-1)
+//   xyLim:      0.55 (hardcoded)
+//
+// Critical ratios:
+//   max_size / xyLim  = 0.198 / 0.55 = 0.36 (36%)
+//   min_size / xyLim  = 0.044 / 0.55 = 0.08 (8%)
+//   max_height         = 0.28
+//   min_height         = 0.038
+// ═══════════════════════════════════════════════════════════════════════
+
+const V3_SIZE_RATIO = 0.36;    // largest topic = 36% of xyLim
+const V3_MAX_HEIGHT = 0.28;    // tallest peak in v3
+const V3_MIN_HEIGHT = 0.035;   // shortest hill in v3
+const XYLIM = 0.55;            // hardcoded like v3
 
 // ═══════════════════════════════════════════════════════════════════════
 // INPUT HANDLING
@@ -167,7 +189,7 @@ function switchTab(tab) {
 
 const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('file-hidden');
-const fileName = document.getElementById('file-name');
+const fileNameEl = document.getElementById('file-name');
 dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
 dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
 dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.classList.remove('dragover'); if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
@@ -177,8 +199,8 @@ function handleFile(file) {
   const ext = file.name.split('.').pop().toLowerCase();
   if (!['txt','docx','pdf'].includes(ext)) { showError('Unsupported file type. Use .txt, .docx, or .pdf'); return; }
   selectedFile = file;
-  fileName.textContent = '\u{1F4C4} ' + file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)';
-  fileName.style.display = 'block';
+  fileNameEl.textContent = '\u{1F4C4} ' + file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)';
+  fileNameEl.style.display = 'block';
   hideError();
 }
 
@@ -220,43 +242,64 @@ async function runAnalysis() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// PROCESS & NORMALIZE — THIS IS THE KEY FIX
+// PROCESS & NORMALIZE — maps API output to exact v3 scale
 // ═══════════════════════════════════════════════════════════════════════
 function processResults(data) {
-  // Raw topics from API
   const raw = data.topics;
   if (!raw.length) return;
 
-  // ─── NORMALIZATION ────────────────────────────────────────────────
-  // The API returns x,y positions spread wide (e.g. -1.5 to 1.5)
-  // and sizes that are small (e.g. 0.02 to 0.08).
-  // We need to rescale so the SIZE-TO-SPREAD RATIO matches the
-  // v3 prototype, where the largest topic covers ~25% of the map.
-  //
-  // Target: largest topic size = 0.25 * half-spread of positions
-  // ──────────────────────────────────────────────────────────────────
+  // ── Step 1: Normalize positions to fit within ±xyLim ──────────────
+  // V3 had positions from roughly -0.45 to 0.70 within xyLim of 0.55
+  // So positions used about 80% of the xyLim range on each side.
+  const maxAbsPos = Math.max(
+    ...raw.map(t => Math.abs(t.x)),
+    ...raw.map(t => Math.abs(t.y)),
+    0.01
+  );
+  const posScale = (XYLIM * 0.8) / maxAbsPos;
 
-  const maxAbsX = Math.max(...raw.map(t => Math.abs(t.x)), 0.1);
-  const maxAbsY = Math.max(...raw.map(t => Math.abs(t.y)), 0.1);
-  const spread = Math.max(maxAbsX, maxAbsY);
+  // ── Step 2: Normalize sizes to match v3 ratio ─────────────────────
+  // V3: largest size was 0.198, which is 36% of xyLim (0.55)
+  // Smallest was 0.044, which is 8% of xyLim
+  const maxRawSize = Math.max(...raw.map(t => t.size), 0.001);
+  const minRawSize = Math.min(...raw.map(t => t.size), 0.001);
+  const targetMaxSize = XYLIM * V3_SIZE_RATIO;   // 0.198
+  const targetMinSize = XYLIM * 0.08;             // 0.044
 
-  const maxRawSize = Math.max(...raw.map(t => t.size), 0.01);
-  const targetMaxSize = spread * 0.28;  // largest topic = 28% of spread
-  const sizeMult = targetMaxSize / maxRawSize;
+  // ── Step 3: Normalize heights to v3 range (0.035 to 0.28) ────────
+  // API returns 0-1 normalized. V3 used raw 0.038-0.28.
+  const maxRawH = Math.max(...raw.map(t => t.height), 0.01);
+  const minRawH = Math.min(...raw.map(t => t.height), 0.001);
 
-  TOPICS = raw.map(t => ({
-    label: t.label,
-    x: t.x,
-    y: t.y,
-    size: t.size * sizeMult,           // Rescaled for proper terrain footprint
-    height: t.height,
-    wikipedia_url: t.wikipedia_url || '',
-    source: t.source || '',
-    similarity: t.similarity || 0,
-    seed: Math.abs(Math.sin(t.x * 127.1 + t.y * 311.7) * 43758.5453) % 1000,
-  }));
+  TOPICS = raw.map(t => {
+    // Position: scale to fit within xyLim
+    const nx = t.x * posScale;
+    const ny = t.y * posScale;
 
-  maxH = Math.max(...TOPICS.map(t => t.height), 0.01);
+    // Size: linear map from [minRaw, maxRaw] to [targetMin, targetMax]
+    const sizeT = (maxRawSize > minRawSize)
+      ? (t.size - minRawSize) / (maxRawSize - minRawSize)
+      : 0.5;
+    const nsize = targetMinSize + sizeT * (targetMaxSize - targetMinSize);
+
+    // Height: linear map from [0, maxRawH] to [V3_MIN, V3_MAX]
+    const heightT = t.height / maxRawH;
+    const nheight = V3_MIN_HEIGHT + heightT * (V3_MAX_HEIGHT - V3_MIN_HEIGHT);
+
+    return {
+      label: t.label,
+      x: nx,
+      y: ny,
+      size: nsize,
+      height: nheight,
+      wikipedia_url: t.wikipedia_url || '',
+      source: t.source || '',
+      similarity: t.similarity || 0,
+      seed: Math.abs(Math.sin(nx * 127.1 + ny * 311.7) * 43758.5453) % 1000,
+    };
+  });
+
+  maxH = Math.max(...TOPICS.map(t => t.height));
 
   // Show metadata
   document.getElementById('m-words').textContent = data.metadata.word_count;
@@ -282,82 +325,127 @@ function hideError() { document.getElementById('error-msg').classList.remove('ac
 function togglePanel() { const p = document.getElementById('input-panel'), b = document.getElementById('toggle-panel'); p.classList.toggle('collapsed'); b.innerHTML = p.classList.contains('collapsed') ? '&#9654;' : '&#9664;'; setTimeout(() => renderCurrent(), 50); }
 
 // ═══════════════════════════════════════════════════════════════════════
-// NOISE + TERRAIN (same organic algorithm as v3 prototype)
+// NOISE + TERRAIN — identical to v3 TopicScope_v3.html
 // ═══════════════════════════════════════════════════════════════════════
-function hashNoise(x,y){let n=Math.sin(x*127.1+y*311.7)*43758.5453;return n-Math.floor(n)}
-function smoothNoise(x,y){const ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy,sx=fx*fx*(3-2*fx),sy=fy*fy*(3-2*fy);return(hashNoise(ix,iy)*(1-sx)+hashNoise(ix+1,iy)*sx)*(1-sy)+(hashNoise(ix,iy+1)*(1-sx)+hashNoise(ix+1,iy+1)*sx)*sy}
-function fbm(x,y,oct){let v=0,a=.5,f=1;for(let o=0;o<oct;o++){v+=a*smoothNoise(x*f,y*f);a*=.5;f*=2}return v}
-function organicNoise(angle,seed){return .3*Math.sin(angle*2+seed*1.17)+.2*Math.sin(angle*3+seed*2.31)+.15*Math.sin(angle*5+seed*3.79)+.1*Math.sin(angle*7+seed*5.13)}
 
-function getXYLim() {
-  if (!TOPICS.length) return 1;
-  const mx = Math.max(...TOPICS.map(t => Math.abs(t.x) + t.size), ...TOPICS.map(t => Math.abs(t.y) + t.size));
-  return mx * 1.2 + 0.1;
+function hashNoise(x, y) {
+  let n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+  return n - Math.floor(n);
 }
 
+function smoothNoise(x, y) {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const fx = x - ix, fy = y - iy;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  return (hashNoise(ix, iy) * (1 - sx) + hashNoise(ix + 1, iy) * sx) * (1 - sy)
+       + (hashNoise(ix, iy + 1) * (1 - sx) + hashNoise(ix + 1, iy + 1) * sx) * sy;
+}
+
+function fbm(x, y, octaves) {
+  let val = 0, amp = 0.5, freq = 1;
+  for (let o = 0; o < octaves; o++) {
+    val += amp * smoothNoise(x * freq, y * freq);
+    amp *= 0.5; freq *= 2.0;
+  }
+  return val;
+}
+
+function organicRadiusNoise(angle, seed) {
+  return 0.0
+    + 0.30 * Math.sin(angle * 2.0 + seed * 1.17)
+    + 0.20 * Math.sin(angle * 3.0 + seed * 2.31)
+    + 0.15 * Math.sin(angle * 5.0 + seed * 3.79)
+    + 0.10 * Math.sin(angle * 7.0 + seed * 5.13);
+}
+
+// Terrain generation — EXACT COPY from TopicScope_v3.html
 function generateTerrain(gridN, xyLim) {
   const grid = new Float32Array(gridN * gridN);
-  const TAIL = 0.7, TAIL_H = 0.15, NOISE_S = 0.12, CAP = 0.50;
+
+  const TAIL_FACTOR = 0.7;
+  const TAIL_BASE_HEIGHT = 0.15;
+  const NOISE_STRENGTH = 0.12;
+  const HEIGHT_CAP = 0.45;
 
   for (let gi = 0; gi < gridN; gi++) {
     for (let gj = 0; gj < gridN; gj++) {
       const wx = (gi / gridN) * 2 * xyLim - xyLim;
       const wy = (gj / gridN) * 2 * xyLim - xyLim;
-      let total = 0;
 
-      for (const t of TOPICS) {
-        const dx = wx - t.x, dy = wy - t.y;
+      let totalHeight = 0;
+
+      for (let ti = 0; ti < TOPICS.length; ti++) {
+        const t = TOPICS[ti];
+        const dx = wx - t.x;
+        const dy = wy - t.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         const angle = Math.atan2(dy, dx);
-        const eR = t.size * (1 + organicNoise(angle, t.seed) * 0.35);
-        let c = 0;
 
-        if (dist < eR) {
-          // Half-ellipse profile: broad, flat-topped hill
-          const ratio = dist / eR;
-          c = t.height * Math.sqrt(Math.max(0, 1 - ratio * ratio));
+        const distortion = organicRadiusNoise(angle, t.seed);
+        const effectiveR = t.size * (1.0 + distortion * 0.35);
+
+        let contribution = 0;
+
+        if (dist < effectiveR) {
+          const ratio = dist / effectiveR;
+          contribution = t.height * Math.sqrt(1.0 - ratio * ratio);
         } else {
-          // Tail zone: connects nearby topics into landmasses
-          const tailExtent = eR * TAIL;
-          const overshoot = dist - eR;
+          const tailExtent = effectiveR * TAIL_FACTOR;
+          const overshoot = dist - effectiveR;
+
           if (overshoot < tailExtent) {
-            const tt = overshoot / tailExtent;
-            const tailEffective = tailExtent * (1 + organicNoise(angle * 1.5 + 2, t.seed + 50) * 0.3);
-            if (overshoot <= tailEffective) {
-              c = t.height * TAIL_H * (1 - tt) * (1 - tt);
-            }
+            const tailT = overshoot / tailExtent;
+            contribution = t.height * TAIL_BASE_HEIGHT * (1.0 - tailT) * (1.0 - tailT);
+
+            const tailNoise = organicRadiusNoise(angle * 1.5 + 2.0, t.seed + 50);
+            const tailEffective = tailExtent * (1.0 + tailNoise * 0.3);
+            if (overshoot > tailEffective) contribution = 0;
           }
         }
-        total += c;  // ADDITIVE accumulation
+
+        totalHeight += contribution;
       }
 
-      if (total > CAP) total = CAP;
-      if (total > 0.002) {
-        total *= (1 - NOISE_S * 0.5 + fbm(gi * 0.06, gj * 0.06, 4) * NOISE_S);
+      if (totalHeight > HEIGHT_CAP) totalHeight = HEIGHT_CAP;
+
+      if (totalHeight > 0.002) {
+        const nv = fbm(gi * 0.06, gj * 0.06, 4);
+        totalHeight *= (1.0 - NOISE_STRENGTH * 0.5 + nv * NOISE_STRENGTH);
       }
-      grid[gi * gridN + gj] = total;
+
+      grid[gi * gridN + gj] = totalHeight;
     }
   }
 
-  // Smoothing pass (2x)
-  for (let p = 0; p < 2; p++) {
-    const tmp = new Float32Array(gridN * gridN);
-    for (let i = 1; i < gridN - 1; i++) for (let j = 1; j < gridN - 1; j++) {
-      const idx = i * gridN + j;
-      tmp[idx] = grid[idx] * .4 + grid[(i-1)*gridN+j] * .1 + grid[(i+1)*gridN+j] * .1 +
-        grid[i*gridN+j-1] * .1 + grid[i*gridN+j+1] * .1 +
-        grid[(i-1)*gridN+j-1] * .05 + grid[(i+1)*gridN+j+1] * .05 +
-        grid[(i-1)*gridN+j+1] * .05 + grid[(i+1)*gridN+j-1] * .05;
+  // Smoothing — 2 passes of 3x3 gaussian blur (same as v3)
+  for (let pass = 0; pass < 2; pass++) {
+    const temp = new Float32Array(gridN * gridN);
+    for (let i = 1; i < gridN - 1; i++) {
+      for (let j = 1; j < gridN - 1; j++) {
+        const idx = i * gridN + j;
+        temp[idx] =
+          grid[idx] * 0.40 +
+          grid[(i-1)*gridN+j] * 0.10 +
+          grid[(i+1)*gridN+j] * 0.10 +
+          grid[i*gridN+j-1] * 0.10 +
+          grid[i*gridN+j+1] * 0.10 +
+          grid[(i-1)*gridN+j-1] * 0.05 +
+          grid[(i+1)*gridN+j+1] * 0.05 +
+          grid[(i-1)*gridN+j+1] * 0.05 +
+          grid[(i+1)*gridN+j-1] * 0.05;
+      }
     }
-    for (let k = 0; k < grid.length; k++) if (tmp[k] > 0) grid[k] = tmp[k];
+    for (let k = 0; k < grid.length; k++) if (temp[k] > 0) grid[k] = temp[k];
   }
+
   return grid;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// COLORS (ThemeScape earthy palette)
+// COLORS — same as v3 (earthy ThemeScape palette)
 // ═══════════════════════════════════════════════════════════════════════
-function hc(h) {
+function heightToColor(h) {
   const t = h / maxH;
   if (t > .85) return { r: .92, g: .87, b: .8 };
   if (t > .65) return { r: .72, g: .62, b: .48 };
@@ -388,14 +476,14 @@ function resize2D() {
 function draw2D() {
   if (!TOPICS.length) return;
   const W = canvas2d.width / devicePixelRatio, H = canvas2d.height / devicePixelRatio;
-  const xyLim = getXYLim();
+  const xyLim = XYLIM;
 
   if (!terrain2dCache) {
-    const gN = Math.min(350, Math.floor(Math.min(W, H)));
+    const gN = Math.min(400, Math.floor(Math.min(W, H)));
     const td = generateTerrain(gN, xyLim);
     const img = ctx.createImageData(gN, gN);
     for (let i = 0; i < gN; i++) for (let j = 0; j < gN; j++) {
-      const h = td[i * gN + j], c = hc(h), px = (j * gN + i) * 4;
+      const h = td[i * gN + j], c = heightToColor(h), px = (j * gN + i) * 4;
       img.data[px] = c.r * 255 | 0; img.data[px+1] = c.g * 255 | 0; img.data[px+2] = c.b * 255 | 0; img.data[px+3] = 255;
     }
     const off = document.createElement('canvas'); off.width = gN; off.height = gN;
@@ -411,7 +499,6 @@ function draw2D() {
   ctx.strokeStyle = 'rgba(100,120,100,0.06)'; ctx.lineWidth = 0.5;
   const gs = W / 8;
   for (let i = 0; i <= 8; i++) { ctx.beginPath(); ctx.moveTo(i*gs,0); ctx.lineTo(i*gs,H); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0,i*gs); ctx.lineTo(W,i*gs); ctx.stroke(); }
-  // Grid labels
   ctx.fillStyle = 'rgba(180,180,170,0.2)'; ctx.font = '10px DM Sans,sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   const letters = 'ABCDEFGH';
   for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) ctx.fillText(letters[c]+(r+1), c*gs+3, r*gs+3);
@@ -422,7 +509,7 @@ function draw2D() {
     const px = ((t.x + xyLim) / (2 * xyLim)) * W;
     const py = (1 - (t.y + xyLim) / (2 * xyLim)) * H;
     const isH = ti === hoveredIdx, isS = ti === selectedIdx;
-    const fs = t.height > 0.7 ? 13 : t.height > 0.4 ? 11 : 10;
+    const fs = t.height > 0.2 ? 13 : t.height > 0.1 ? 11 : 10;
     ctx.font = `${(isH||isS)?'bold ':''}${fs}px 'DM Sans',sans-serif`;
     const tm = ctx.measureText(t.label), pad = 3;
     ctx.fillStyle = 'rgba(255,255,245,0.72)';
@@ -430,15 +517,14 @@ function draw2D() {
     if (isH || isS) { ctx.strokeStyle = isS ? '#cc6600' : '#445544'; ctx.lineWidth = 1.5; ctx.strokeRect(px - tm.width/2 - pad, py - fs/2 - pad, tm.width + pad*2, fs + pad*2); }
     ctx.fillStyle = '#2a2a20'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(t.label, px, py);
-    ctx.fillStyle = 'rgba(60,50,40,0.4)'; ctx.beginPath(); ctx.arc(px, py + fs/2 + pad + 3, 2, 0, Math.PI*2); ctx.fill();
   }
 }
 
 canvas2d.addEventListener('mousemove', e => {
   if (currentMode !== '2d' || !TOPICS.length) return;
-  const r = canvas2d.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, W = r.width, H = r.height, xyLim = getXYLim();
+  const r = canvas2d.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, W = r.width, H = r.height;
   let f = -1;
-  for (let i = 0; i < TOPICS.length; i++) { const t = TOPICS[i], px = ((t.x+xyLim)/(2*xyLim))*W, py = (1-(t.y+xyLim)/(2*xyLim))*H; if (Math.abs(mx-px)<55 && Math.abs(my-py)<12) f = i; }
+  for (let i = 0; i < TOPICS.length; i++) { const t = TOPICS[i], px = ((t.x+XYLIM)/(2*XYLIM))*W, py = (1-(t.y+XYLIM)/(2*XYLIM))*H; if (Math.abs(mx-px)<55 && Math.abs(my-py)<12) f = i; }
   hoveredIdx = f; canvas2d.style.cursor = f >= 0 ? 'pointer' : 'default'; draw2D();
 });
 canvas2d.addEventListener('click', () => { if (hoveredIdx >= 0) { selectedIdx = hoveredIdx; showInfo(TOPICS[hoveredIdx]); } else { selectedIdx = -1; closeInfo(); } draw2D(); });
@@ -449,7 +535,7 @@ canvas2d.addEventListener('click', () => { if (hoveredIdx >= 0) { selectedIdx = 
 function showInfo(t) {
   document.getElementById('infopanel').style.display = 'block';
   document.getElementById('info-title').textContent = t.label;
-  document.getElementById('info-rel').textContent = (t.height * 100).toFixed(1) + '%';
+  document.getElementById('info-rel').textContent = (t.height / V3_MAX_HEIGHT * 100).toFixed(1) + '%';
   document.getElementById('info-bar').style.width = (t.height / maxH * 100) + '%';
   document.getElementById('info-sim').textContent = t.similarity.toFixed(3);
   document.getElementById('info-source').textContent = t.source;
@@ -459,19 +545,23 @@ function showInfo(t) {
 function closeInfo() { document.getElementById('infopanel').style.display = 'none'; selectedIdx = -1; if (currentMode === '2d') draw2D(); }
 
 // ═══════════════════════════════════════════════════════════════════════
-// 3D
+// 3D — same parameters as v3 (gridN=300, xyLim=0.55, heightScale=22)
 // ═══════════════════════════════════════════════════════════════════════
 function init3D() {
-  const c = document.getElementById('container3d'), W = c.clientWidth, H = c.clientHeight, xyLim = getXYLim();
+  const c = document.getElementById('container3d'), W = c.clientWidth, H = c.clientHeight;
   const scene = new THREE.Scene(); scene.background = new THREE.Color(0x8aaabe); scene.fog = new THREE.FogExp2(0x8aaabe, 0.025);
   const camera = new THREE.PerspectiveCamera(50, W/H, 0.1, 1000); camera.position.set(0, 12, 22); camera.lookAt(0, 0, 0);
   const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setSize(W, H); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); c.appendChild(renderer.domElement);
 
   scene.add(new THREE.AmbientLight(0x99aabb, 0.6));
-  const sun = new THREE.DirectionalLight(0xfff4e0, 1); sun.position.set(8, 15, 5); scene.add(sun);
+  const sun = new THREE.DirectionalLight(0xfff4e0, 1.0); sun.position.set(8, 15, 5); scene.add(sun);
   const fill = new THREE.DirectionalLight(0x88aacc, 0.3); fill.position.set(-5, 8, -8); scene.add(fill);
 
-  const gridN = 250, hScale = 20;
+  // EXACT v3 parameters
+  const gridN = 300;
+  const xyLim = XYLIM;   // 0.55 — hardcoded like v3
+  const heightScale = 22; // same as v3
+
   const td = generateTerrain(gridN, xyLim);
   const geo = new THREE.PlaneGeometry(28, 28, gridN-1, gridN-1); geo.rotateX(-Math.PI / 2);
   const verts = geo.attributes.position, colors = new Float32Array(verts.count * 3);
@@ -479,35 +569,43 @@ function init3D() {
   for (let i = 0; i < verts.count; i++) {
     const ix = i % gridN, iy = Math.floor(i / gridN);
     const h = td[iy * gridN + ix];
-    verts.setY(i, h * hScale);
-    const co = hc(h); colors[i*3] = co.r; colors[i*3+1] = co.g; colors[i*3+2] = co.b;
+    verts.setY(i, h * heightScale);
+    const co = heightToColor(h); colors[i*3] = co.r; colors[i*3+1] = co.g; colors[i*3+2] = co.b;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3)); geo.computeVertexNormals();
-  scene.add(new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 15, specular: 0x222222, side: THREE.DoubleSide })));
 
+  const mat = new THREE.MeshPhongMaterial({
+    vertexColors: true, shininess: 15, specular: 0x222222,
+    side: THREE.DoubleSide, flatShading: false,
+  });
+  scene.add(new THREE.Mesh(geo, mat));
+
+  // Ocean
   const seaGeo = new THREE.PlaneGeometry(80, 80); seaGeo.rotateX(-Math.PI / 2);
   const sea = new THREE.Mesh(seaGeo, new THREE.MeshPhongMaterial({ color: 0x3a5a7a, shininess: 60, specular: 0x446688, transparent: true, opacity: 0.85 }));
   sea.position.y = -0.1; scene.add(sea);
 
   // Labels
   for (const t of TOPICS) {
-    if (t.height < 0.15) continue;
+    if (t.height < V3_MIN_HEIGHT + 0.01) continue;
     const cv = document.createElement('canvas'), cx = cv.getContext('2d'); cv.width = 512; cv.height = 72; cx.clearRect(0, 0, 512, 72);
-    const fs = t.height > 0.7 ? 26 : t.height > 0.4 ? 21 : 16;
+    const fs = t.height > 0.2 ? 26 : t.height > 0.1 ? 21 : 16;
     cx.font = `bold ${fs}px 'DM Sans',sans-serif`;
     const tm = cx.measureText(t.label), bw = Math.min(500, tm.width + 20), bx = 256 - bw/2;
     cx.fillStyle = 'rgba(255,255,245,0.75)'; cx.beginPath(); cx.roundRect(bx, 10, bw, fs+14, 6); cx.fill();
     cx.fillStyle = '#2a2a20'; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(t.label, 256, 10+(fs+14)/2);
     const tex = new THREE.CanvasTexture(cv);
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-    sp.position.set((t.x / xyLim) * 14, t.height * hScale + 2, -(t.y / xyLim) * 14);
+    const sx = (t.x / xyLim) * 14;
+    const sz = -(t.y / xyLim) * 14;
+    sp.position.set(sx, t.height * heightScale + 2, sz);
     sp.scale.set(7, 1, 1); scene.add(sp);
   }
   return { scene, camera, renderer };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// CONTROLS
+// CONTROLS (same as v3)
 // ═══════════════════════════════════════════════════════════════════════
 let orbit = { drag: false, lx: 0, ly: 0, theta: .3, phi: .9, dist: 22 };
 function updateOrbit(cam) { cam.position.x = orbit.dist*Math.sin(orbit.phi)*Math.sin(orbit.theta); cam.position.y = orbit.dist*Math.cos(orbit.phi); cam.position.z = orbit.dist*Math.sin(orbit.phi)*Math.cos(orbit.theta); cam.lookAt(0,0,0); }
