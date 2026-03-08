@@ -15,7 +15,7 @@ from backend.pipeline.embeddings import embed_texts, cosine_distance_matrix, cos
 import numpy as np
 
 
-def force_directed_repulsion(candidates, iterations=600, min_distance=0.15, repulsion=0.003, damping=0.88, center_pull=0.0002):
+def force_directed_repulsion(candidates, iterations=700, min_distance=0.255, repulsion=0.005, damping=0.86, center_pull=0.00015):
     """
     Strong force repulsion. Creates water channels.
     min_distance is large (0.15) so even small topics get pushed apart.

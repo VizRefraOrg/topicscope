@@ -212,7 +212,7 @@ function processResults(data){
       x:t.x*posScale,
       y:t.y*posScale,
       radius: 0.06 + sizeT * 0.19,       // island footprint radius (0.06 to 0.25)
-      height: 0.08 + hT * 0.45,           // island peak height (0.08 to 0.53)
+      height: 0.03 + hT * 0.17,           // island peak height (0.03 to 0.20)
       wikipedia_url:t.wikipedia_url||'',
       source:t.source||'',
       similarity:t.similarity||0,
@@ -268,11 +268,12 @@ function heightColor(t){
 // ═══════════════════════════════════════════════════════════════
 // CREATE ISLAND DOME MESH (single topic)
 // ═══════════════════════════════════════════════════════════════
-function createIslandMesh(topic, sceneScale){
+function createIslandMesh(topic, sceneScale, globalMaxH){
   const R = topic.radius * sceneScale;
   const H = topic.height * sceneScale;
   const cx = topic.x * sceneScale;
   const cz = -topic.y * sceneScale;
+  const absMaxH = globalMaxH * sceneScale; // global max for consistent coloring
 
   const rings = 20;   // concentric rings from center to edge
   const segs = 32;    // angular segments
@@ -283,7 +284,7 @@ function createIslandMesh(topic, sceneScale){
 
   // Center vertex
   verts.push(cx, H, cz);
-  const peakCol = heightColor(1.0);
+  const peakCol = heightColor(H / absMaxH);  // color relative to GLOBAL max
   colors.push(peakCol[0]/255, peakCol[1]/255, peakCol[2]/255);
 
   // Ring vertices
@@ -305,17 +306,19 @@ function createIslandMesh(topic, sceneScale){
 
       // Add subtle surface texture
       if(ri > 2 && ri < rings){
-        const nv = Math.sin(px*8+pz*6)*0.02 + Math.sin(px*13+pz*11)*0.01;
+        const nv = Math.sin(px*8+pz*6)*0.015 + Math.sin(px*13+pz*11)*0.008;
         py += nv * H;
       }
 
-      // Shore: clamp to just above water
-      if(ri >= rings) py = Math.max(py, 0.02 * sceneScale);
+      // Shore: meet the water line naturally
+      if(ri >= rings-1) py = Math.max(py, 0.005 * sceneScale);
 
       verts.push(px, py, pz);
 
-      const heightFrac = py / Math.max(H, 0.01);
-      const col = heightColor(heightFrac);
+      // Color based on ABSOLUTE height (relative to global max)
+      // NOT per-island — so only the tallest island gets pale/white peak
+      const absHeightFrac = Math.min(py / absMaxH, 1.0);
+      const col = heightColor(absHeightFrac);
       colors.push(col[0]/255, col[1]/255, col[2]/255);
     }
   }
@@ -484,17 +487,20 @@ function init3D(){
   // Scene scale: maps our -1..1 coordinate range to Three.js world units
   const SCENE_SCALE = 14;
 
-  // Ocean plane
+  // Ocean plane — raised to close gap with island shores
   const seaGeo=new THREE.PlaneGeometry(120,120);seaGeo.rotateX(-Math.PI/2);
   const sea=new THREE.Mesh(seaGeo,new THREE.MeshPhongMaterial({
     color:0x3a6a8a, shininess:80, specular:0x446688,
     transparent:true, opacity:0.9
   }));
-  sea.position.y=-0.05;scene.add(sea);
+  sea.position.y=0.03;scene.add(sea);
+
+  // Global max height for consistent coloring across all islands
+  const globalMaxH = Math.max(...TOPICS.map(t => t.height));
 
   // Create each island as a SEPARATE mesh
   for(const topic of TOPICS){
-    const island = createIslandMesh(topic, SCENE_SCALE);
+    const island = createIslandMesh(topic, SCENE_SCALE, globalMaxH);
     scene.add(island);
 
     // Label sprite — positioned at island peak
