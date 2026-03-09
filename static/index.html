@@ -149,7 +149,16 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
       <div id="info-wiki-row" style="margin-top:6px;display:none"><a id="info-wiki" href="#" target="_blank">View on Wikipedia &#8599;</a></div>
       <button id="close-info" onclick="closeInfo()">Close</button>
     </div>
-    <div id="legend" style="display:none"><div class="leg-title">RELEVANCE</div><div><span class="leg-bar"></span> Low &rarr; High</div><div style="margin-top:4px">Island size = salience · Height = relevance</div></div>
+    <div id="legend" style="display:none">
+      <div class="leg-title">ENTITY TYPES</div>
+      <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px">
+        <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgb(90,150,80);margin-right:5px"></span>Organization</div>
+        <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgb(140,110,75);margin-right:5px"></span>Person</div>
+        <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgb(75,135,130);margin-right:5px"></span>Place</div>
+        <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgb(120,105,140);margin-right:5px"></span>Group</div>
+      </div>
+      <div style="margin-top:6px">Size = salience · Height = relevance</div>
+    </div>
   </div>
 </div>
 
@@ -193,31 +202,67 @@ async function runAnalysis(){
 // ═══════════════════════════════════════════════════════════════
 // PROCESS RESULTS — normalize for discrete islands
 // ═══════════════════════════════════════════════════════════════
+// Tag-based color palettes (different earthy tones per entity type)
+const TAG_PALETTES = {
+  'ORG':    {base:[60,120,65],   mid:[90,150,80],  peak:[160,180,120], label:'Organization'},
+  'PERSON': {base:[100,80,60],   mid:[140,110,75],  peak:[190,165,130], label:'Person'},
+  'GPE':    {base:[50,100,110],  mid:[75,135,130],  peak:[140,180,170], label:'Place'},
+  'LOC':    {base:[50,100,110],  mid:[75,135,130],  peak:[140,180,170], label:'Location'},
+  'NORP':   {base:[90,80,110],   mid:[120,105,140], peak:[170,155,185], label:'Group'},
+  'EVENT':  {base:[110,85,60],   mid:[150,115,75],  peak:[195,170,130], label:'Event'},
+  'PRODUCT':{base:[80,95,55],    mid:[115,135,75],  peak:[165,185,125], label:'Product'},
+  'MISC':   {base:[70,100,75],   mid:[100,135,95],  peak:[155,180,145], label:'Other'},
+};
+
+function getTagPalette(tag) {
+  return TAG_PALETTES[tag] || TAG_PALETTES['MISC'];
+}
+
+function tagHeightColor(tag, t) {
+  // t = 0 (shore) to 1 (peak), colored by entity type
+  const p = getTagPalette(tag);
+  if(t > 0.8) return p.peak;
+  if(t > 0.5) {
+    const f = (t-0.5)/0.3;
+    return [p.mid[0]+(p.peak[0]-p.mid[0])*f, p.mid[1]+(p.peak[1]-p.mid[1])*f, p.mid[2]+(p.peak[2]-p.mid[2])*f];
+  }
+  if(t > 0.15) {
+    const f = (t-0.15)/0.35;
+    return [p.base[0]+(p.mid[0]-p.base[0])*f, p.base[1]+(p.mid[1]-p.base[1])*f, p.base[2]+(p.mid[2]-p.base[2])*f];
+  }
+  return p.base;
+}
+
 function processResults(data){
   const raw=data.topics;if(!raw.length)return;
 
-  // Normalize positions: fit within -1 to 1
+  // Normalize positions to fit within -1 to 1
   const maxAbsPos=Math.max(...raw.map(t=>Math.abs(t.x)),...raw.map(t=>Math.abs(t.y)),0.01);
   const posScale=0.85/maxAbsPos;
 
-  // Size range: smallest=0.06, largest=0.25 (in world units, before scene scale)
-  const maxRawSize=Math.max(...raw.map(t=>t.size),0.001), minRawSize=Math.min(...raw.map(t=>t.size),0.001);
-  const maxRawH=Math.max(...raw.map(t=>t.height),0.01);
+  // Size comes from API as sqrt(salience)*100 (range ~7 to ~97)
+  // Map to island radius: 0.04 to 0.25
+  const maxSize = Math.max(...raw.map(t=>t.size), 1);
+  const maxRawH = Math.max(...raw.map(t=>t.height), 0.01);
 
   TOPICS=raw.map((t,i)=>{
-    const sizeT=(maxRawSize>minRawSize)?(t.size-minRawSize)/(maxRawSize-minRawSize):0.5;
-    const hT=t.height/maxRawH;
+    const sizeNorm = t.size / maxSize;  // 0 to 1
+    const hNorm = t.height / maxRawH;   // 0 to 1
+
     return{
-      label:t.label,
-      x:t.x*posScale,
-      y:t.y*posScale,
-      radius: 0.06 + sizeT * 0.19,       // island footprint radius (0.06 to 0.25)
-      height: 0.03 + hT * 0.17,           // island peak height (0.03 to 0.20)
-      wikipedia_url:t.wikipedia_url||'',
-      source:t.source||'',
-      similarity:t.similarity||0,
-      seed: Math.abs(Math.sin((i+1)*127.1+i*311.7)*43758.5453)%1000,
-      shore_markers: t.shore_markers||[],
+      label: t.label,
+      x: t.x * posScale,
+      y: t.y * posScale,
+      radius: 0.04 + sizeNorm * 0.21,    // 0.04 to 0.25
+      height: 0.02 + hNorm * 0.18,       // 0.02 to 0.20
+      tag: t.tag || 'MISC',
+      cluster: t.cluster || 1,
+      salience: t.salience || 0,
+      wikipedia_url: t.wikipedia_url || '',
+      source: t.source || '',
+      similarity: t.similarity || 0,
+      seed: Math.abs(Math.sin((i+1)*127.1+i*311.7)*43758.5453) % 1000,
+      shore_markers: t.shore_markers || [],
     };
   });
 
@@ -275,6 +320,7 @@ function createIslandMesh(topic, sceneScale, globalMaxH){
   const cx = topic.x * sceneScale;
   const cz = -topic.y * sceneScale;
   const absMaxH = globalMaxH * sceneScale;
+  const tag = topic.tag || 'MISC';
 
   // Main dome rings + extra shelf rings beyond the edge
   const domeRings = 18;
@@ -288,7 +334,7 @@ function createIslandMesh(topic, sceneScale, globalMaxH){
 
   // Center vertex
   verts.push(cx, H, cz);
-  const peakCol = heightColor(H / absMaxH);
+  const peakCol = tagHeightColor(tag, H / absMaxH);
   colors.push(peakCol[0]/255, peakCol[1]/255, peakCol[2]/255);
 
   for(let ri=1; ri<=totalRings; ri++){
@@ -342,12 +388,13 @@ function createIslandMesh(topic, sceneScale, globalMaxH){
       // Color: shelf area is always dark green (land cover)
       let col;
       if(!isDome){
-        // Shelf = dark green shore, getting darker toward water
-        const g = 72 + (1-shelfFrac)*30;
-        col = [55 + (1-shelfFrac)*20, g, 55 + (1-shelfFrac)*15];
+        // Shelf = dark version of tag base color
+        const bp = getTagPalette(tag).base;
+        const f = 1 - shelfFrac;
+        col = [bp[0]*0.7 + f*15, bp[1]*0.7 + f*20, bp[2]*0.7 + f*10];
       } else {
         const absHeightFrac = Math.min(py / absMaxH, 1.0);
-        col = heightColor(absHeightFrac);
+        col = tagHeightColor(tag, absHeightFrac);
       }
       colors.push(col[0]/255, col[1]/255, col[2]/255);
     }
@@ -426,22 +473,22 @@ function draw2D(){
       // Actually draw concentric colored rings
     }
 
-    // Simpler: gradient fill
+    // Gradient fill using tag palette
+    const tp = getTagPalette(t.tag);
     const grd=ctx.createRadialGradient(px-r*0.2,py-r*0.2,r*0.1,px,py,r*1.1);
-    grd.addColorStop(0,'rgba(235,225,210,0.95)');
-    grd.addColorStop(0.25,'rgba(185,160,125,0.9)');
-    grd.addColorStop(0.5,'rgba(150,170,100,0.85)');
-    grd.addColorStop(0.75,'rgba(90,130,82,0.8)');
-    grd.addColorStop(1.0,'rgba(50,90,70,0.0)');
+    grd.addColorStop(0,`rgba(${tp.peak[0]},${tp.peak[1]},${tp.peak[2]},0.95)`);
+    grd.addColorStop(0.35,`rgba(${tp.mid[0]},${tp.mid[1]},${tp.mid[2]},0.9)`);
+    grd.addColorStop(0.7,`rgba(${tp.base[0]},${tp.base[1]},${tp.base[2]},0.8)`);
+    grd.addColorStop(1.0,`rgba(${Math.floor(tp.base[0]*0.7)},${Math.floor(tp.base[1]*0.7)},${Math.floor(tp.base[2]*0.7)},0.0)`);
     ctx.beginPath();ctx.arc(px,py,r*1.1,0,Math.PI*2);ctx.fillStyle=grd;ctx.fill();
 
     // Coastline contour
     ctx.beginPath();ctx.arc(px,py,r,0,Math.PI*2);
-    ctx.strokeStyle='rgba(90,130,82,0.4)';ctx.lineWidth=1.5;ctx.stroke();
+    ctx.strokeStyle=`rgba(${tp.base[0]},${tp.base[1]},${tp.base[2]},0.5)`;ctx.lineWidth=1.5;ctx.stroke();
 
     // Inner contour
     ctx.beginPath();ctx.arc(px,py,r*0.6,0,Math.PI*2);
-    ctx.strokeStyle='rgba(150,170,100,0.25)';ctx.lineWidth=0.8;ctx.stroke();
+    ctx.strokeStyle=`rgba(${tp.mid[0]},${tp.mid[1]},${tp.mid[2]},0.25)`;ctx.lineWidth=0.8;ctx.stroke();
 
     if(isH||isS){
       ctx.beginPath();ctx.arc(px,py,r+3,0,Math.PI*2);
@@ -506,7 +553,8 @@ function showInfo(t){
   document.getElementById('info-rel').textContent=(t.height/maxH*100).toFixed(1)+'%';
   document.getElementById('info-bar').style.width=(t.height/maxH*100)+'%';
   document.getElementById('info-sim').textContent=t.similarity.toFixed(3);
-  document.getElementById('info-source').textContent=t.source;
+  const tagLabel = TAG_PALETTES[t.tag] ? TAG_PALETTES[t.tag].label : t.tag;
+  document.getElementById('info-source').textContent=tagLabel + ' (cluster ' + (t.cluster||'?') + ')';
   const wr=document.getElementById('info-wiki-row'),wl=document.getElementById('info-wiki');
   if(t.wikipedia_url){wr.style.display='block';wl.href=t.wikipedia_url}else wr.style.display='none';
 }
@@ -644,16 +692,17 @@ function renderDebugTable(){
   html+='</table></div>';
   if(lastData.debug&&lastData.debug.length){
     html+='<div class="debug-section"><h3>Topic Pipeline Debug ('+lastData.debug.length+')</h3>';
-    html+='<table class="debug-table"><tr><th>#</th><th>Topic</th><th>Source</th><th>Salience</th><th>Sim→Article</th><th>Sim→Entities</th><th>TF-IDF</th><th>Height</th><th>Size</th><th>X</th><th>Y</th></tr>';
-    lastData.debug.forEach((d,i)=>{html+=`<tr><td class="num">${i+1}</td><td>${d.title}</td><td>${d.source}</td><td class="num ${(d.salience||0)>0.2?'high':'mid'}">${(d.salience||0).toFixed(4)}</td><td class="num">${d.sim_article}</td><td class="num">${d.sim_entities}</td><td class="num">${d.tfidf}</td><td class="num">${d.final_height}</td><td class="num">${d.final_size}</td><td class="num">${d.x_final||d.x_pca||d.x}</td><td class="num">${d.y_final||d.y_pca||d.y}</td></tr>`});
+    html+='<table class="debug-table"><tr><th>#</th><th>Topic</th><th>Source</th><th>Tag</th><th>Cluster</th><th>Salience</th><th>Size</th><th>Sim→Article</th><th>Sim→Entities</th><th>TF-IDF</th><th>Height</th><th>X</th><th>Y</th></tr>';
+    lastData.debug.forEach((d,i)=>{html+=`<tr><td class="num">${i+1}</td><td>${d.title}</td><td>${d.source}</td><td>${d.tag||''}</td><td class="num">${d.cluster||''}</td><td class="num ${(d.salience||0)>0.3?'high':(d.salience||0)>0.1?'mid':'low'}">${(d.salience||0).toFixed(4)}</td><td class="num">${(d.size||0).toFixed(1)}</td><td class="num">${d.sim_article}</td><td class="num">${d.sim_entities}</td><td class="num">${d.tfidf}</td><td class="num">${d.final_height}</td><td class="num">${d.x_final||d.x}</td><td class="num">${d.y_final||d.y}</td></tr>`});
     html+='</table></div>';
   }
   html+='<div class="debug-section"><h3>Final Islands ('+TOPICS.length+') + Shore Markers</h3>';
-  html+='<table class="debug-table"><tr><th>#</th><th>Label</th><th>Radius</th><th>Height</th><th>Shore Markers</th><th>X</th><th>Y</th></tr>';
+  html+='<table class="debug-table"><tr><th>#</th><th>Label</th><th>Tag</th><th>Cluster</th><th>Radius</th><th>Height</th><th>Shore Markers</th></tr>';
   TOPICS.forEach((t,i)=>{
     const sm = t.shore_markers||[];
-    const smNames = sm.map(m=>m.label).join(', ');
-    html+=`<tr><td class="num">${i+1}</td><td><strong>${t.label}</strong></td><td class="num">${t.radius.toFixed(4)}</td><td class="num ${t.height>0.35?'high':t.height>0.2?'mid':'low'}">${t.height.toFixed(4)}</td><td style="font-size:10px;max-width:300px;white-space:normal">${sm.length ? `(${sm.length}) ${smNames}` : '-'}</td><td class="num">${t.x.toFixed(4)}</td><td class="num">${t.y.toFixed(4)}</td></tr>`;
+    const smNames = sm.map(m=>`${m.label} [${m.tag||''}]`).join(', ');
+    html+=`<tr><td class="num">${i+1}</td><td><strong>${t.label}</strong></td><td>${t.tag}</td><td class="num">${t.cluster}</td><td class="num">${t.radius.toFixed(4)}</td><td class="num ${t.height>0.15?'high':t.height>0.08?'mid':'low'}">${t.height.toFixed(4)}</td><td style="font-size:10px;max-width:300px;white-space:normal">${sm.length ? `(${sm.length}) ${smNames}` : '-'}</td></tr>`;
+  });
   });
   html+='</table></div>';
   dv.innerHTML=html;

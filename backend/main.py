@@ -11,18 +11,12 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from backend.config import settings
 
-app = FastAPI(
-    title="TopicScope API",
-    description="Textual Data Visual Analysis — Topic Discovery & Terrain Visualization",
-    version="1.0.0",
-)
+app = FastAPI(title="TopicScope API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
 )
 
 
@@ -34,8 +28,11 @@ class TopicResult(BaseModel):
     label: str
     x: float
     y: float
-    size: float
-    height: float
+    size: float         # sqrt(salience) * 100 — ready to render
+    height: float       # 0 to 1 relevance
+    tag: str = "MISC"   # entity type: PERSON, ORG, GPE, etc
+    cluster: int = 1    # K-means group ID
+    salience: float = 0.0
     wikipedia_url: str = ""
     source: str = ""
     similarity: float = 0.0
@@ -90,9 +87,13 @@ async def run_analysis(text: str) -> AnalyseResponse:
         if not candidates:
             raise HTTPException(status_code=422, detail="All candidates were filtered out.")
 
-        # Reduction now returns dict with candidates, debug, distance_matrix
+        # Pass entities for tag/salience lookup
         from backend.pipeline.reduction import compute_distance_and_reduce
-        result = compute_distance_and_reduce(candidates, text, entities_text=entities_text)
+        result = compute_distance_and_reduce(
+            candidates, text,
+            entities=entities,
+            entities_text=entities_text,
+        )
         candidates = result["candidates"]
         debug_data = result.get("debug", [])
         dist_matrix = result.get("distance_matrix", [])
@@ -104,9 +105,14 @@ async def run_analysis(text: str) -> AnalyseResponse:
 
         topics_out = [
             TopicResult(
-                label=t["title"], x=t["x"], y=t["y"], size=t["size"],
-                height=t["height"], wikipedia_url=t.get("wikipedia_url", ""),
-                source=t.get("source", ""), similarity=t.get("similarity", 0.0),
+                label=t["title"], x=t["x"], y=t["y"],
+                size=t["size"], height=t["height"],
+                tag=t.get("tag", "MISC"),
+                cluster=t.get("cluster", 1),
+                salience=t.get("salience", 0),
+                wikipedia_url=t.get("wikipedia_url", ""),
+                source=t.get("source", ""),
+                similarity=t.get("similarity", 0.0),
                 shore_markers=t.get("shore_markers", []),
             )
             for t in final_topics
@@ -124,8 +130,7 @@ async def run_analysis(text: str) -> AnalyseResponse:
                 "candidates_discovered": len(candidates),
                 "topics_final": len(final_topics), "processing_time_ms": elapsed_ms,
             },
-            debug=debug_data,
-            distance_matrix=dist_matrix,
+            debug=debug_data, distance_matrix=dist_matrix,
         )
 
     except HTTPException:
@@ -155,9 +160,4 @@ async def serve_frontend():
     index_path = os.path.join(static_dir, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
-    return {"status": "ok", "service": "TopicScope API", "version": "1.0.0"}
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    return {"status": "ok", "service": "TopicScope API"}
