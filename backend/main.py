@@ -39,6 +39,7 @@ class TopicResult(BaseModel):
     wikipedia_url: str = ""
     source: str = ""
     similarity: float = 0.0
+    shore_markers: list = []
 
 
 class EntityResult(BaseModel):
@@ -106,6 +107,7 @@ async def run_analysis(text: str) -> AnalyseResponse:
                 label=t["title"], x=t["x"], y=t["y"], size=t["size"],
                 height=t["height"], wikipedia_url=t.get("wikipedia_url", ""),
                 source=t.get("source", ""), similarity=t.get("similarity", 0.0),
+                shore_markers=t.get("shore_markers", []),
             )
             for t in final_topics
         ]

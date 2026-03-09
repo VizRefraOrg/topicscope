@@ -217,6 +217,7 @@ function processResults(data){
       source:t.source||'',
       similarity:t.similarity||0,
       seed: Math.abs(Math.sin((i+1)*127.1+i*311.7)*43758.5453)%1000,
+      shore_markers: t.shore_markers||[],
     };
   });
 
@@ -273,10 +274,13 @@ function createIslandMesh(topic, sceneScale, globalMaxH){
   const H = topic.height * sceneScale;
   const cx = topic.x * sceneScale;
   const cz = -topic.y * sceneScale;
-  const absMaxH = globalMaxH * sceneScale; // global max for consistent coloring
+  const absMaxH = globalMaxH * sceneScale;
 
-  const rings = 20;   // concentric rings from center to edge
-  const segs = 32;    // angular segments
+  // Main dome rings + extra shelf rings beyond the edge
+  const domeRings = 18;
+  const shelfRings = 6;   // low-lying land around the island
+  const totalRings = domeRings + shelfRings;
+  const segs = 32;
 
   const verts = [];
   const indices = [];
@@ -284,41 +288,67 @@ function createIslandMesh(topic, sceneScale, globalMaxH){
 
   // Center vertex
   verts.push(cx, H, cz);
-  const peakCol = heightColor(H / absMaxH);  // color relative to GLOBAL max
+  const peakCol = heightColor(H / absMaxH);
   colors.push(peakCol[0]/255, peakCol[1]/255, peakCol[2]/255);
 
-  // Ring vertices
-  for(let ri=1; ri<=rings; ri++){
-    const ringFrac = ri/rings;  // 0 = center, 1 = edge
+  for(let ri=1; ri<=totalRings; ri++){
+    const isDome = ri <= domeRings;
+    const ringFrac = isDome ? ri/domeRings : 1.0;
+    // Shelf extends beyond dome radius
+    const shelfFrac = isDome ? 0 : (ri - domeRings) / shelfRings; // 0 at dome edge, 1 at shelf edge
+
     for(let si=0; si<segs; si++){
       const angle = (si/segs)*Math.PI*2;
 
-      // Organic coastline distortion at outer rings
-      const coastDistort = (ri > rings*0.6) ? coastlineNoise(angle, topic.seed) : 1.0;
-      const effR = R * ringFrac * coastDistort;
+      // Organic coastline at outer dome + all shelf
+      const coastDistort = (ri > domeRings*0.6) ? coastlineNoise(angle, topic.seed) : 1.0;
+
+      let effR;
+      if(isDome){
+        effR = R * ringFrac * coastDistort;
+      } else {
+        // Shelf extends 35% beyond dome radius
+        const shelfExtend = R * 0.35;
+        effR = (R + shelfFrac * shelfExtend) * coastDistort;
+      }
 
       const px = cx + effR * Math.cos(angle);
       const pz = cz + effR * Math.sin(angle);
 
-      // Half-ellipse profile: h = H * sqrt(1 - (dist/R)^2)
-      const distFrac = Math.min(ringFrac, 1.0);
-      let py = H * Math.sqrt(Math.max(0, 1.0 - distFrac*distFrac));
-
-      // Add subtle surface texture
-      if(ri > 2 && ri < rings){
-        const nv = Math.sin(px*8+pz*6)*0.015 + Math.sin(px*13+pz*11)*0.008;
-        py += nv * H;
+      let py;
+      if(isDome){
+        // Half-ellipse profile
+        const distFrac = Math.min(ringFrac, 1.0);
+        py = H * Math.sqrt(Math.max(0, 1.0 - distFrac*distFrac));
+        // Surface texture
+        if(ri > 2 && ri < domeRings-1){
+          const nv = Math.sin(px*8+pz*6)*0.015 + Math.sin(px*13+pz*11)*0.008;
+          py += nv * H;
+        }
+      } else {
+        // Shelf: low land that slopes down to water
+        // Starts at dome-edge height, drops to just above water
+        const domeEdgeH = H * Math.sqrt(Math.max(0, 1.0 - 0.95*0.95)); // height at 95% of dome
+        const shoreH = 0.04 * sceneScale; // just above water level
+        py = domeEdgeH * (1.0 - shelfFrac) + shoreH * shelfFrac;
+        // Add some noise to shelf
+        const nv = Math.sin(px*6+pz*5)*0.3 + Math.sin(px*11+pz*9)*0.15;
+        py *= (1.0 + nv * 0.15);
+        py = Math.max(py, 0.02 * sceneScale);
       }
-
-      // Shore: meet the water line naturally
-      if(ri >= rings-1) py = Math.max(py, 0.005 * sceneScale);
 
       verts.push(px, py, pz);
 
-      // Color based on ABSOLUTE height (relative to global max)
-      // NOT per-island — so only the tallest island gets pale/white peak
-      const absHeightFrac = Math.min(py / absMaxH, 1.0);
-      const col = heightColor(absHeightFrac);
+      // Color: shelf area is always dark green (land cover)
+      let col;
+      if(!isDome){
+        // Shelf = dark green shore, getting darker toward water
+        const g = 72 + (1-shelfFrac)*30;
+        col = [55 + (1-shelfFrac)*20, g, 55 + (1-shelfFrac)*15];
+      } else {
+        const absHeightFrac = Math.min(py / absMaxH, 1.0);
+        col = heightColor(absHeightFrac);
+      }
       colors.push(col[0]/255, col[1]/255, col[2]/255);
     }
   }
@@ -330,7 +360,7 @@ function createIslandMesh(topic, sceneScale, globalMaxH){
   }
 
   // Triangles: ring to ring
-  for(let ri=1; ri<rings; ri++){
+  for(let ri=1; ri<totalRings; ri++){
     const ringStart = 1 + (ri-1)*segs;
     const nextRingStart = 1 + ri*segs;
     for(let si=0; si<segs; si++){
@@ -426,6 +456,25 @@ function draw2D(){
     ctx.fillRect(px-tm.width/2-lpad,py-fs/2-lpad-2,tm.width+lpad*2,fs+lpad*2);
     ctx.fillStyle='#2a2a20';ctx.textAlign='center';ctx.textBaseline='middle';
     ctx.fillText(t.label,px,py-2);
+
+    // Shore markers — small labels around island perimeter
+    if(t.shore_markers && t.shore_markers.length){
+      const shelfR = r * 1.15;
+      const startA = (t.seed % 100) / 100 * Math.PI * 2;
+      const stepA = Math.PI * 2 / t.shore_markers.length;
+      ctx.font='9px DM Sans,sans-serif';
+      for(let mi=0;mi<t.shore_markers.length;mi++){
+        const a = startA + mi * stepA;
+        const mlx = px + shelfR * Math.cos(a);
+        const mly = py + shelfR * Math.sin(a);
+        const ml = t.shore_markers[mi].label;
+        const mtm = ctx.measureText(ml);
+        ctx.fillStyle='rgba(240,240,230,0.55)';
+        ctx.fillRect(mlx-mtm.width/2-2, mly-5, mtm.width+4, 12);
+        ctx.fillStyle='rgba(50,50,40,0.6)';ctx.textAlign='center';ctx.textBaseline='middle';
+        ctx.fillText(ml, mlx, mly);
+      }
+    }
   }
 
   // Grid overlay
@@ -469,8 +518,8 @@ function closeInfo(){document.getElementById('infopanel').style.display='none';s
 function init3D(){
   const c=document.getElementById('container3d'),W=c.clientWidth,H=c.clientHeight;
   const scene=new THREE.Scene();
-  scene.background=new THREE.Color(0x6a9ab8);
-  scene.fog=new THREE.FogExp2(0x6a9ab8, 0.015);
+  scene.background=new THREE.Color(0x7aaabe);
+  scene.fog=new THREE.FogExp2(0x7aaabe, 0.012);
 
   const camera=new THREE.PerspectiveCamera(50,W/H,0.1,500);
   camera.position.set(0,15,25);camera.lookAt(0,0,0);
@@ -490,10 +539,10 @@ function init3D(){
   // Ocean plane — raised to close gap with island shores
   const seaGeo=new THREE.PlaneGeometry(120,120);seaGeo.rotateX(-Math.PI/2);
   const sea=new THREE.Mesh(seaGeo,new THREE.MeshPhongMaterial({
-    color:0x3a6a8a, shininess:80, specular:0x446688,
-    transparent:true, opacity:0.9
+    color:0x2a4a6a, shininess:90, specular:0x334466,
+    transparent:true, opacity:0.92
   }));
-  sea.position.y=0.03;scene.add(sea);
+  sea.position.y=0.05;scene.add(sea);
 
   // Global max height for consistent coloring across all islands
   const globalMaxH = Math.max(...TOPICS.map(t => t.height));
@@ -525,6 +574,39 @@ function init3D(){
     sp.position.set(worldX, peakY+1.2, worldZ);
     sp.scale.set(6,0.75,1);
     scene.add(sp);
+
+    // Shore markers — smaller labels placed around island perimeter
+    if(topic.shore_markers && topic.shore_markers.length > 0){
+      const shelfR = topic.radius * SCENE_SCALE * 1.15; // on the coastal shelf
+      const markerCount = topic.shore_markers.length;
+      const angleStep = (Math.PI * 2) / Math.max(markerCount, 1);
+      // Start angle offset based on seed so each island is different
+      const startAngle = (topic.seed % 100) / 100 * Math.PI * 2;
+
+      for(let mi=0; mi<markerCount; mi++){
+        const marker = topic.shore_markers[mi];
+        const angle = startAngle + mi * angleStep;
+        const mx = worldX + shelfR * Math.cos(angle);
+        const mz = worldZ + shelfR * Math.sin(angle);
+        const my = 0.4; // just above water on the shelf
+
+        const mcv=document.createElement('canvas'),mcx=mcv.getContext('2d');
+        mcv.width=256;mcv.height=36;mcx.clearRect(0,0,256,36);
+        const mfs=10;
+        mcx.font=`500 ${mfs}px 'DM Sans',sans-serif`;
+        const mtm=mcx.measureText(marker.label),mbw=Math.min(240,mtm.width+12),mbx=128-mbw/2;
+        mcx.fillStyle='rgba(240,240,235,0.6)';
+        mcx.beginPath();mcx.roundRect(mbx,6,mbw,mfs+8,3);mcx.fill();
+        mcx.fillStyle='rgba(50,50,40,0.7)';mcx.textAlign='center';mcx.textBaseline='middle';
+        mcx.fillText(marker.label,128,6+(mfs+8)/2);
+
+        const mtex=new THREE.CanvasTexture(mcv);
+        const msp=new THREE.Sprite(new THREE.SpriteMaterial({map:mtex,transparent:true,depthTest:false}));
+        msp.position.set(mx, my, mz);
+        msp.scale.set(3.5,0.5,1);
+        scene.add(msp);
+      }
+    }
   }
 
   return{scene,camera,renderer};
@@ -566,9 +648,13 @@ function renderDebugTable(){
     lastData.debug.forEach((d,i)=>{html+=`<tr><td class="num">${i+1}</td><td>${d.title}</td><td>${d.source}</td><td class="num ${(d.salience||0)>0.2?'high':'mid'}">${(d.salience||0).toFixed(4)}</td><td class="num">${d.sim_article}</td><td class="num">${d.sim_entities}</td><td class="num">${d.tfidf}</td><td class="num">${d.final_height}</td><td class="num">${d.final_size}</td><td class="num">${d.x_final||d.x_pca||d.x}</td><td class="num">${d.y_final||d.y_pca||d.y}</td></tr>`});
     html+='</table></div>';
   }
-  html+='<div class="debug-section"><h3>Final Islands ('+TOPICS.length+')</h3>';
-  html+='<table class="debug-table"><tr><th>#</th><th>Label</th><th>Radius</th><th>Height</th><th>X</th><th>Y</th></tr>';
-  TOPICS.forEach((t,i)=>{html+=`<tr><td class="num">${i+1}</td><td>${t.label}</td><td class="num">${t.radius.toFixed(4)}</td><td class="num ${t.height>0.35?'high':t.height>0.2?'mid':'low'}">${t.height.toFixed(4)}</td><td class="num">${t.x.toFixed(4)}</td><td class="num">${t.y.toFixed(4)}</td></tr>`});
+  html+='<div class="debug-section"><h3>Final Islands ('+TOPICS.length+') + Shore Markers</h3>';
+  html+='<table class="debug-table"><tr><th>#</th><th>Label</th><th>Radius</th><th>Height</th><th>Shore Markers</th><th>X</th><th>Y</th></tr>';
+  TOPICS.forEach((t,i)=>{
+    const sm = t.shore_markers||[];
+    const smNames = sm.map(m=>m.label).join(', ');
+    html+=`<tr><td class="num">${i+1}</td><td><strong>${t.label}</strong></td><td class="num">${t.radius.toFixed(4)}</td><td class="num ${t.height>0.35?'high':t.height>0.2?'mid':'low'}">${t.height.toFixed(4)}</td><td style="font-size:10px;max-width:300px;white-space:normal">${sm.length ? `(${sm.length}) ${smNames}` : '-'}</td><td class="num">${t.x.toFixed(4)}</td><td class="num">${t.y.toFixed(4)}</td></tr>`;
+  });
   html+='</table></div>';
   dv.innerHTML=html;
 }
