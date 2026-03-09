@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TopicScope — Textual Data Visualization</title>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'DM Sans',sans-serif;background:#0f1118;color:#e0dce8;overflow:hidden;height:100vh;display:flex;flex-direction:column}
@@ -31,7 +31,7 @@ body{font-family:'DM Sans',sans-serif;background:#0f1118;color:#e0dce8;overflow:
 #text-input{display:flex;flex-direction:column;flex:1}
 #file-input{display:none;flex-direction:column;flex:1}
 #text-input.active,#file-input.active{display:flex}
-textarea{flex:1;min-height:200px;background:rgba(30,25,55,0.6);border:1px solid rgba(100,80,200,0.2);border-radius:8px;padding:12px;color:#e0dce8;font-family:inherit;font-size:13px;line-height:1.5;resize:none;outline:none}
+textarea{flex:1;min-height:200px;background:rgba(30,25,55,0.6);border:1px solid rgba(100,80,200,0.2);border-radius:8px;padding:12px;color:#e0dce8;font-family:inherit;font-size:13px;line-height:1.5;resize:none;outline:none;transition:border 0.2s}
 textarea:focus{border-color:rgba(150,120,255,0.5)}
 textarea::placeholder{color:rgba(140,130,180,0.4)}
 .dropzone{flex:1;min-height:200px;border:2px dashed rgba(100,80,200,0.25);border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;cursor:pointer;transition:all 0.2s;background:rgba(30,25,55,0.3)}
@@ -79,17 +79,6 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
 .leg-title{font-weight:700;color:#e0dce8;letter-spacing:0.04em;margin-bottom:4px}
 .leg-bar{width:70px;height:6px;border-radius:3px;background:linear-gradient(90deg,#3a6b35,#6b8f47,#a0a070,#8b7355,#e8dcc8);display:inline-block;vertical-align:middle;margin-right:5px}
 #toggle-panel{position:absolute;top:50%;left:0;transform:translateY(-50%);width:20px;height:50px;background:rgba(20,15,45,0.8);border:1px solid rgba(100,80,200,0.15);border-left:none;border-radius:0 6px 6px 0;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:15;color:rgba(180,170,220,0.5);font-size:12px}
-#debug-view{display:none;position:absolute;inset:0;background:rgba(10,10,20,0.97);z-index:12;overflow:auto;padding:20px}
-#debug-view.active{display:block}
-#debug-view h3{color:#cc44ff;font-size:14px;margin-bottom:12px;font-weight:700}
-.debug-section{margin-bottom:24px}
-.debug-table{width:100%;border-collapse:collapse;font-size:11px;font-family:'JetBrains Mono',monospace}
-.debug-table th{background:rgba(100,80,200,0.2);color:#e0dce8;padding:6px 8px;text-align:left;position:sticky;top:0;font-weight:600;white-space:nowrap}
-.debug-table td{padding:5px 8px;border-bottom:1px solid rgba(100,80,200,0.08);color:rgba(200,195,220,0.8);white-space:nowrap}
-.debug-table tr:hover td{background:rgba(100,80,200,0.06)}
-.debug-table .num{text-align:right;font-variant-numeric:tabular-nums}
-.high{color:#ff8844;font-weight:600}.mid{color:#cc44ff}.low{color:rgba(140,130,180,0.5)}
-.ent-table td{padding:4px 8px}
 </style>
 </head>
 <body>
@@ -99,9 +88,8 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
   <div class="header-right">
     <div class="switcher" id="mode-switcher" style="display:none">
       <button class="active" onclick="switchMode('2d')">2D Map</button>
-      <button onclick="switchMode('3d')">3D Islands</button>
+      <button onclick="switchMode('3d')">3D Terrain</button>
       <button onclick="switchMode('fly')">Fly-Through</button>
-      <button onclick="switchMode('debug')">Debug Table</button>
     </div>
     <div class="hint" id="hint"></div>
   </div>
@@ -128,17 +116,16 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
         <div id="file-name"></div>
       </div>
       <div class="error-msg" id="error-msg"></div>
-      <div class="loading" id="loading"><div class="spinner"></div><div class="loading-text">Analysing your text...</div><div class="loading-step" id="loading-step"></div></div>
+      <div class="loading" id="loading"><div class="spinner"></div><div class="loading-text">Analysing your text...</div><div class="loading-step" id="loading-step">Extracting entities and discovering topics</div></div>
     </div>
     <div class="analyse-section"><button id="analyse-btn" onclick="runAnalysis()">Analyse</button></div>
     <div id="metadata"><div class="meta-item"><span id="m-words">0</span> words</div><div class="meta-item"><span id="m-entities">0</span> entities</div><div class="meta-item"><span id="m-topics">0</span> topics</div><div class="meta-item"><span id="m-time">0</span>ms</div></div>
   </div>
 
   <div id="viz">
-    <div id="empty-state"><div class="empty-icon">&#9968;</div><div class="empty-title">No analysis yet</div><div class="empty-sub">Paste text or upload a document to generate a topic archipelago visualization</div></div>
+    <div id="empty-state"><div class="empty-icon">&#9968;</div><div class="empty-title">No analysis yet</div><div class="empty-sub">Paste text or upload a document to generate a topic terrain visualization</div></div>
     <canvas id="canvas2d"></canvas>
     <div id="container3d" tabindex="0"></div>
-    <div id="debug-view"></div>
     <div id="toggle-panel" onclick="togglePanel()">&#9664;</div>
     <div id="infopanel">
       <div class="cat">Topic Details</div><div class="title" id="info-title"></div>
@@ -149,591 +136,523 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
       <div id="info-wiki-row" style="margin-top:6px;display:none"><a id="info-wiki" href="#" target="_blank">View on Wikipedia &#8599;</a></div>
       <button id="close-info" onclick="closeInfo()">Close</button>
     </div>
-    <div id="legend" style="display:none">
-      <div class="leg-title">ENTITY TYPES</div>
-      <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px">
-        <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgb(90,150,80);margin-right:5px"></span>Organization</div>
-        <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgb(140,110,75);margin-right:5px"></span>Person</div>
-        <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgb(75,135,130);margin-right:5px"></span>Place</div>
-        <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgb(120,105,140);margin-right:5px"></span>Group</div>
-      </div>
-      <div style="margin-top:6px">Size = salience · Height = relevance</div>
-    </div>
+    <div id="legend" style="display:none"><div class="leg-title">RELEVANCE</div><div><span class="leg-bar"></span> Low &rarr; High</div><div style="margin-top:4px">Region size = similarity score</div></div>
   </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
 // STATE
-// ═══════════════════════════════════════════════════════════════
-let TOPICS=[], currentMode='2d', hoveredIdx=-1, selectedIdx=-1, animFrame=null, maxH=1;
-let lastData=null;
-const API_BASE=window.location.origin;
+// ═══════════════════════════════════════════════════════════════════════
+let TOPICS = [];
+let currentMode = '2d';
+let hoveredIdx = -1, selectedIdx = -1;
+let animFrame = null;
+let maxH = 0.28;  // Will be set after normalization
+const API_BASE = window.location.origin;
 
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
+// V3 REFERENCE VALUES — these are the exact ratios that produced
+// the good-looking terrain. All normalization targets these.
+//
+// V3 data:
+//   positions:  -0.448 to 0.700 (after 2.8x spacing on -0.16 to 0.25 raw)
+//   sizes:      0.044 to 0.198  (after 2.2x radius on 0.02 to 0.09 raw)
+//   heights:    0.038 to 0.280  (RAW — NOT normalized to 0-1)
+//   xyLim:      0.55 (hardcoded)
+//
+// Critical ratios:
+//   max_size / xyLim  = 0.198 / 0.55 = 0.36 (36%)
+//   min_size / xyLim  = 0.044 / 0.55 = 0.08 (8%)
+//   max_height         = 0.28
+//   min_height         = 0.038
+// ═══════════════════════════════════════════════════════════════════════
+
+const V3_SIZE_RATIO = 0.36;    // largest topic = 36% of xyLim
+const V3_MAX_HEIGHT = 0.28;    // tallest peak in v3
+const V3_MIN_HEIGHT = 0.035;   // shortest hill in v3
+const XYLIM = 0.55;            // hardcoded like v3
+
+// ═══════════════════════════════════════════════════════════════════════
 // INPUT HANDLING
-// ═══════════════════════════════════════════════════════════════
-let selectedFile=null, currentTab='text';
-function switchTab(t){currentTab=t;document.querySelectorAll('.tabs button').forEach((b,i)=>b.classList.toggle('active',['text','file'][i]===t));document.getElementById('text-input').classList.toggle('active',t==='text');document.getElementById('file-input').classList.toggle('active',t==='file')}
-const dropzone=document.getElementById('dropzone'),fileInput=document.getElementById('file-hidden'),fileNameEl=document.getElementById('file-name');
-dropzone.addEventListener('dragover',e=>{e.preventDefault();dropzone.classList.add('dragover')});
-dropzone.addEventListener('dragleave',()=>dropzone.classList.remove('dragover'));
-dropzone.addEventListener('drop',e=>{e.preventDefault();dropzone.classList.remove('dragover');if(e.dataTransfer.files.length)handleFile(e.dataTransfer.files[0])});
-fileInput.addEventListener('change',e=>{if(e.target.files.length)handleFile(e.target.files[0])});
-function handleFile(f){const ext=f.name.split('.').pop().toLowerCase();if(!['txt','docx','pdf'].includes(ext)){showError('Use .txt, .docx, or .pdf');return}selectedFile=f;fileNameEl.textContent='\u{1F4C4} '+f.name;fileNameEl.style.display='block';hideError()}
+// ═══════════════════════════════════════════════════════════════════════
+let selectedFile = null;
+let currentTab = 'text';
 
-// ═══════════════════════════════════════════════════════════════
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tabs button').forEach((b,i) => b.classList.toggle('active', ['text','file'][i]===tab));
+  document.getElementById('text-input').classList.toggle('active', tab==='text');
+  document.getElementById('file-input').classList.toggle('active', tab==='file');
+}
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('file-hidden');
+const fileNameEl = document.getElementById('file-name');
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.classList.remove('dragover'); if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener('change', e => { if (e.target.files.length) handleFile(e.target.files[0]); });
+
+function handleFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['txt','docx','pdf'].includes(ext)) { showError('Unsupported file type. Use .txt, .docx, or .pdf'); return; }
+  selectedFile = file;
+  fileNameEl.textContent = '\u{1F4C4} ' + file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)';
+  fileNameEl.style.display = 'block';
+  hideError();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // ANALYSIS
-// ═══════════════════════════════════════════════════════════════
-async function runAnalysis(){
-  const btn=document.getElementById('analyse-btn'),loading=document.getElementById('loading');hideError();
-  if(currentTab==='text'){if(document.getElementById('textarea').value.trim().length<50){showError('Enter at least 50 characters.');return}}else{if(!selectedFile){showError('Select a file.');return}}
-  btn.disabled=true;loading.classList.add('active');updateLoadingStep('Sending...');
-  try{
+// ═══════════════════════════════════════════════════════════════════════
+async function runAnalysis() {
+  const btn = document.getElementById('analyse-btn');
+  const loading = document.getElementById('loading');
+  hideError();
+  if (currentTab === 'text') {
+    if (document.getElementById('textarea').value.trim().length < 50) { showError('Please enter at least 50 characters.'); return; }
+  } else {
+    if (!selectedFile) { showError('Please select a file.'); return; }
+  }
+  btn.disabled = true;
+  loading.classList.add('active');
+  updateLoadingStep('Sending to analysis pipeline...');
+  try {
     let response;
-    if(currentTab==='text'){updateLoadingStep('Extracting entities...');response=await fetch(API_BASE+'/api/analyse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:document.getElementById('textarea').value.trim()})})}
-    else{const fd=new FormData();fd.append('file',selectedFile);updateLoadingStep('Parsing file...');response=await fetch(API_BASE+'/api/upload',{method:'POST',body:fd})}
-    if(!response.ok){const err=await response.json().catch(()=>({detail:'Server error'}));throw new Error(err.detail||`Error ${response.status}`)}
-    const data=await response.json();lastData=data;updateLoadingStep('Generating visualization...');await new Promise(r=>setTimeout(r,200));processResults(data);
-  }catch(err){showError(err.message)}finally{btn.disabled=false;loading.classList.remove('active')}
+    if (currentTab === 'text') {
+      updateLoadingStep('Extracting entities and discovering topics...');
+      response = await fetch(API_BASE + '/api/analyse', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: document.getElementById('textarea').value.trim() }),
+      });
+    } else {
+      const fd = new FormData(); fd.append('file', selectedFile);
+      updateLoadingStep('Parsing file and extracting text...');
+      response = await fetch(API_BASE + '/api/upload', { method: 'POST', body: fd });
+    }
+    if (!response.ok) { const err = await response.json().catch(() => ({ detail: 'Server error' })); throw new Error(err.detail || `Server returned ${response.status}`); }
+    const data = await response.json();
+    updateLoadingStep('Generating terrain visualization...');
+    await new Promise(r => setTimeout(r, 300));
+    processResults(data);
+  } catch (err) { showError(err.message); }
+  finally { btn.disabled = false; loading.classList.remove('active'); }
 }
 
-// ═══════════════════════════════════════════════════════════════
-// PROCESS RESULTS — normalize for discrete islands
-// ═══════════════════════════════════════════════════════════════
-// Tag-based color palettes (different earthy tones per entity type)
-const TAG_PALETTES = {
-  'ORG':    {base:[60,120,65],   mid:[90,150,80],  peak:[160,180,120], label:'Organization'},
-  'PERSON': {base:[100,80,60],   mid:[140,110,75],  peak:[190,165,130], label:'Person'},
-  'GPE':    {base:[50,100,110],  mid:[75,135,130],  peak:[140,180,170], label:'Place'},
-  'LOC':    {base:[50,100,110],  mid:[75,135,130],  peak:[140,180,170], label:'Location'},
-  'NORP':   {base:[90,80,110],   mid:[120,105,140], peak:[170,155,185], label:'Group'},
-  'EVENT':  {base:[110,85,60],   mid:[150,115,75],  peak:[195,170,130], label:'Event'},
-  'PRODUCT':{base:[80,95,55],    mid:[115,135,75],  peak:[165,185,125], label:'Product'},
-  'MISC':   {base:[70,100,75],   mid:[100,135,95],  peak:[155,180,145], label:'Other'},
-};
+// ═══════════════════════════════════════════════════════════════════════
+// PROCESS & NORMALIZE — maps API output to exact v3 scale
+// ═══════════════════════════════════════════════════════════════════════
+function processResults(data) {
+  const raw = data.topics;
+  if (!raw.length) return;
 
-function getTagPalette(tag) {
-  return TAG_PALETTES[tag] || TAG_PALETTES['MISC'];
-}
+  // ── Step 1: Normalize positions to fit within ±xyLim ──────────────
+  // V3 had positions from roughly -0.45 to 0.70 within xyLim of 0.55
+  // So positions used about 80% of the xyLim range on each side.
+  const maxAbsPos = Math.max(
+    ...raw.map(t => Math.abs(t.x)),
+    ...raw.map(t => Math.abs(t.y)),
+    0.01
+  );
+  const posScale = (XYLIM * 0.8) / maxAbsPos;
 
-function tagHeightColor(tag, t) {
-  // t = 0 (shore) to 1 (peak), colored by entity type
-  const p = getTagPalette(tag);
-  if(t > 0.8) return p.peak;
-  if(t > 0.5) {
-    const f = (t-0.5)/0.3;
-    return [p.mid[0]+(p.peak[0]-p.mid[0])*f, p.mid[1]+(p.peak[1]-p.mid[1])*f, p.mid[2]+(p.peak[2]-p.mid[2])*f];
-  }
-  if(t > 0.15) {
-    const f = (t-0.15)/0.35;
-    return [p.base[0]+(p.mid[0]-p.base[0])*f, p.base[1]+(p.mid[1]-p.base[1])*f, p.base[2]+(p.mid[2]-p.base[2])*f];
-  }
-  return p.base;
-}
+  // ── Step 2: Normalize sizes to match v3 ratio ─────────────────────
+  // V3: largest size was 0.198, which is 36% of xyLim (0.55)
+  // Smallest was 0.044, which is 8% of xyLim
+  const maxRawSize = Math.max(...raw.map(t => t.size), 0.001);
+  const minRawSize = Math.min(...raw.map(t => t.size), 0.001);
+  const targetMaxSize = XYLIM * V3_SIZE_RATIO;   // 0.198
+  const targetMinSize = XYLIM * 0.08;             // 0.044
 
-function processResults(data){
-  const raw=data.topics;if(!raw.length)return;
+  // ── Step 3: Normalize heights to v3 range (0.035 to 0.28) ────────
+  // API returns 0-1 normalized. V3 used raw 0.038-0.28.
+  const maxRawH = Math.max(...raw.map(t => t.height), 0.01);
+  const minRawH = Math.min(...raw.map(t => t.height), 0.001);
 
-  // Normalize positions to fit within -1 to 1
-  const maxAbsPos=Math.max(...raw.map(t=>Math.abs(t.x)),...raw.map(t=>Math.abs(t.y)),0.01);
-  const posScale=0.85/maxAbsPos;
+  TOPICS = raw.map(t => {
+    // Position: scale to fit within xyLim
+    const nx = t.x * posScale;
+    const ny = t.y * posScale;
 
-  // Size comes from API as sqrt(salience)*100 (range ~7 to ~97)
-  // Map to island radius: 0.04 to 0.25
-  const maxSize = Math.max(...raw.map(t=>t.size), 1);
-  const maxRawH = Math.max(...raw.map(t=>t.height), 0.01);
+    // Size: linear map from [minRaw, maxRaw] to [targetMin, targetMax]
+    const sizeT = (maxRawSize > minRawSize)
+      ? (t.size - minRawSize) / (maxRawSize - minRawSize)
+      : 0.5;
+    const nsize = targetMinSize + sizeT * (targetMaxSize - targetMinSize);
 
-  TOPICS=raw.map((t,i)=>{
-    const sizeNorm = t.size / maxSize;  // 0 to 1
-    const hNorm = t.height / maxRawH;   // 0 to 1
+    // Height: linear map from [0, maxRawH] to [V3_MIN, V3_MAX]
+    const heightT = t.height / maxRawH;
+    const nheight = V3_MIN_HEIGHT + heightT * (V3_MAX_HEIGHT - V3_MIN_HEIGHT);
 
-    return{
+    return {
       label: t.label,
-      x: t.x * posScale,
-      y: t.y * posScale,
-      radius: 0.04 + sizeNorm * 0.21,    // 0.04 to 0.25
-      height: 0.02 + hNorm * 0.18,       // 0.02 to 0.20
-      tag: t.tag || 'MISC',
-      cluster: t.cluster || 1,
-      salience: t.salience || 0,
+      x: nx,
+      y: ny,
+      size: nsize,
+      height: nheight,
       wikipedia_url: t.wikipedia_url || '',
       source: t.source || '',
       similarity: t.similarity || 0,
-      seed: Math.abs(Math.sin((i+1)*127.1+i*311.7)*43758.5453) % 1000,
-      shore_markers: t.shore_markers || [],
+      seed: Math.abs(Math.sin(nx * 127.1 + ny * 311.7) * 43758.5453) % 1000,
     };
   });
 
-  maxH=Math.max(...TOPICS.map(t=>t.height));
+  maxH = Math.max(...TOPICS.map(t => t.height));
 
-  document.getElementById('m-words').textContent=data.metadata.word_count;
-  document.getElementById('m-entities').textContent=data.metadata.entities_found;
-  document.getElementById('m-topics').textContent=data.metadata.topics_final;
-  document.getElementById('m-time').textContent=data.metadata.processing_time_ms;
+  // Show metadata
+  document.getElementById('m-words').textContent = data.metadata.word_count;
+  document.getElementById('m-entities').textContent = data.metadata.entities_found;
+  document.getElementById('m-topics').textContent = data.metadata.topics_final;
+  document.getElementById('m-time').textContent = data.metadata.processing_time_ms;
   document.getElementById('metadata').classList.add('active');
+
   document.getElementById('empty-state').classList.add('hidden');
-  document.getElementById('mode-switcher').style.display='flex';
-  document.getElementById('legend').style.display='block';
-  currentMode='2d';
-  document.querySelectorAll('#mode-switcher button').forEach((b,i)=>b.classList.toggle('active',i===0));
-  document.getElementById('hint').textContent='Hover & click topics';
+  document.getElementById('mode-switcher').style.display = 'flex';
+  document.getElementById('legend').style.display = 'block';
+
+  currentMode = '2d';
+  document.querySelectorAll('#mode-switcher button').forEach((b,i) => b.classList.toggle('active', i===0));
+  document.getElementById('hint').textContent = 'Hover & click topics';
+  terrain2dCache = null;
   renderCurrent();
 }
 
-function updateLoadingStep(m){document.getElementById('loading-step').textContent=m}
-function showError(m){const e=document.getElementById('error-msg');e.textContent=m;e.classList.add('active')}
-function hideError(){document.getElementById('error-msg').classList.remove('active')}
-function togglePanel(){const p=document.getElementById('input-panel'),b=document.getElementById('toggle-panel');p.classList.toggle('collapsed');b.innerHTML=p.classList.contains('collapsed')?'&#9654;':'&#9664;';setTimeout(()=>renderCurrent(),50)}
+function updateLoadingStep(msg) { document.getElementById('loading-step').textContent = msg; }
+function showError(msg) { const el = document.getElementById('error-msg'); el.textContent = msg; el.classList.add('active'); }
+function hideError() { document.getElementById('error-msg').classList.remove('active'); }
+function togglePanel() { const p = document.getElementById('input-panel'), b = document.getElementById('toggle-panel'); p.classList.toggle('collapsed'); b.innerHTML = p.classList.contains('collapsed') ? '&#9654;' : '&#9664;'; setTimeout(() => renderCurrent(), 50); }
 
-// ═══════════════════════════════════════════════════════════════
-// ORGANIC NOISE (per-island coastline)
-// ═══════════════════════════════════════════════════════════════
-function coastlineNoise(angle, seed){
-  return 1.0
-    + 0.18 * Math.sin(angle*2.0 + seed*1.17)
-    + 0.12 * Math.sin(angle*3.0 + seed*2.31)
-    + 0.08 * Math.sin(angle*5.0 + seed*3.79)
-    + 0.05 * Math.sin(angle*7.0 + seed*5.13);
+// ═══════════════════════════════════════════════════════════════════════
+// NOISE + TERRAIN — identical to v3 TopicScope_v3.html
+// ═══════════════════════════════════════════════════════════════════════
+
+function hashNoise(x, y) {
+  let n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+  return n - Math.floor(n);
 }
 
-// ═══════════════════════════════════════════════════════════════
-// HEIGHT COLOR (earthy palette)
-// ═══════════════════════════════════════════════════════════════
-function heightColor(t){
-  // t = 0 (shore) to 1 (peak)
-  if(t>0.85) return [235,225,210];
-  if(t>0.65) return [185,160,125];
-  if(t>0.45) return [150,170,100];
-  if(t>0.25) return [110,150,92];
-  if(t>0.10) return [90,130,82];
-  return [72,108,72];
+function smoothNoise(x, y) {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const fx = x - ix, fy = y - iy;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  return (hashNoise(ix, iy) * (1 - sx) + hashNoise(ix + 1, iy) * sx) * (1 - sy)
+       + (hashNoise(ix, iy + 1) * (1 - sx) + hashNoise(ix + 1, iy + 1) * sx) * sy;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// CREATE ISLAND DOME MESH (single topic)
-// ═══════════════════════════════════════════════════════════════
-function createIslandMesh(topic, sceneScale, globalMaxH){
-  const R = topic.radius * sceneScale;
-  const H = topic.height * sceneScale;
-  const cx = topic.x * sceneScale;
-  const cz = -topic.y * sceneScale;
-  const absMaxH = globalMaxH * sceneScale;
-  const tag = topic.tag || 'MISC';
+function fbm(x, y, octaves) {
+  let val = 0, amp = 0.5, freq = 1;
+  for (let o = 0; o < octaves; o++) {
+    val += amp * smoothNoise(x * freq, y * freq);
+    amp *= 0.5; freq *= 2.0;
+  }
+  return val;
+}
 
-  // Main dome rings + extra shelf rings beyond the edge
-  const domeRings = 18;
-  const shelfRings = 6;   // low-lying land around the island
-  const totalRings = domeRings + shelfRings;
-  const segs = 32;
+function organicRadiusNoise(angle, seed) {
+  return 0.0
+    + 0.30 * Math.sin(angle * 2.0 + seed * 1.17)
+    + 0.20 * Math.sin(angle * 3.0 + seed * 2.31)
+    + 0.15 * Math.sin(angle * 5.0 + seed * 3.79)
+    + 0.10 * Math.sin(angle * 7.0 + seed * 5.13);
+}
 
-  const verts = [];
-  const indices = [];
-  const colors = [];
+// Terrain generation — EXACT COPY from TopicScope_v3.html
+function generateTerrain(gridN, xyLim) {
+  const grid = new Float32Array(gridN * gridN);
 
-  // Center vertex
-  verts.push(cx, H, cz);
-  const peakCol = tagHeightColor(tag, H / absMaxH);
-  colors.push(peakCol[0]/255, peakCol[1]/255, peakCol[2]/255);
+  const TAIL_FACTOR = 0.7;
+  const TAIL_BASE_HEIGHT = 0.15;
+  const NOISE_STRENGTH = 0.12;
+  const HEIGHT_CAP = 0.45;
 
-  for(let ri=1; ri<=totalRings; ri++){
-    const isDome = ri <= domeRings;
-    const ringFrac = isDome ? ri/domeRings : 1.0;
-    // Shelf extends beyond dome radius
-    const shelfFrac = isDome ? 0 : (ri - domeRings) / shelfRings; // 0 at dome edge, 1 at shelf edge
+  for (let gi = 0; gi < gridN; gi++) {
+    for (let gj = 0; gj < gridN; gj++) {
+      const wx = (gi / gridN) * 2 * xyLim - xyLim;
+      const wy = (gj / gridN) * 2 * xyLim - xyLim;
 
-    for(let si=0; si<segs; si++){
-      const angle = (si/segs)*Math.PI*2;
+      let totalHeight = 0;
 
-      // Organic coastline at outer dome + all shelf
-      const coastDistort = (ri > domeRings*0.6) ? coastlineNoise(angle, topic.seed) : 1.0;
+      for (let ti = 0; ti < TOPICS.length; ti++) {
+        const t = TOPICS[ti];
+        const dx = wx - t.x;
+        const dy = wy - t.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const angle = Math.atan2(dy, dx);
 
-      let effR;
-      if(isDome){
-        effR = R * ringFrac * coastDistort;
-      } else {
-        // Shelf extends 35% beyond dome radius
-        const shelfExtend = R * 0.35;
-        effR = (R + shelfFrac * shelfExtend) * coastDistort;
-      }
+        const distortion = organicRadiusNoise(angle, t.seed);
+        const effectiveR = t.size * (1.0 + distortion * 0.35);
 
-      const px = cx + effR * Math.cos(angle);
-      const pz = cz + effR * Math.sin(angle);
+        let contribution = 0;
 
-      let py;
-      if(isDome){
-        // Half-ellipse profile
-        const distFrac = Math.min(ringFrac, 1.0);
-        py = H * Math.sqrt(Math.max(0, 1.0 - distFrac*distFrac));
-        // Surface texture
-        if(ri > 2 && ri < domeRings-1){
-          const nv = Math.sin(px*8+pz*6)*0.015 + Math.sin(px*13+pz*11)*0.008;
-          py += nv * H;
+        if (dist < effectiveR) {
+          const ratio = dist / effectiveR;
+          contribution = t.height * Math.sqrt(1.0 - ratio * ratio);
+        } else {
+          const tailExtent = effectiveR * TAIL_FACTOR;
+          const overshoot = dist - effectiveR;
+
+          if (overshoot < tailExtent) {
+            const tailT = overshoot / tailExtent;
+            contribution = t.height * TAIL_BASE_HEIGHT * (1.0 - tailT) * (1.0 - tailT);
+
+            const tailNoise = organicRadiusNoise(angle * 1.5 + 2.0, t.seed + 50);
+            const tailEffective = tailExtent * (1.0 + tailNoise * 0.3);
+            if (overshoot > tailEffective) contribution = 0;
+          }
         }
-      } else {
-        // Shelf: low land that slopes down to water
-        // Starts at dome-edge height, drops to just above water
-        const domeEdgeH = H * Math.sqrt(Math.max(0, 1.0 - 0.95*0.95)); // height at 95% of dome
-        const shoreH = 0.04 * sceneScale; // just above water level
-        py = domeEdgeH * (1.0 - shelfFrac) + shoreH * shelfFrac;
-        // Add some noise to shelf
-        const nv = Math.sin(px*6+pz*5)*0.3 + Math.sin(px*11+pz*9)*0.15;
-        py *= (1.0 + nv * 0.15);
-        py = Math.max(py, 0.02 * sceneScale);
+
+        totalHeight += contribution;
       }
 
-      verts.push(px, py, pz);
+      if (totalHeight > HEIGHT_CAP) totalHeight = HEIGHT_CAP;
 
-      // Color: shelf area is always dark green (land cover)
-      let col;
-      if(!isDome){
-        // Shelf = dark version of tag base color
-        const bp = getTagPalette(tag).base;
-        const f = 1 - shelfFrac;
-        col = [bp[0]*0.7 + f*15, bp[1]*0.7 + f*20, bp[2]*0.7 + f*10];
-      } else {
-        const absHeightFrac = Math.min(py / absMaxH, 1.0);
-        col = tagHeightColor(tag, absHeightFrac);
+      if (totalHeight > 0.002) {
+        const nv = fbm(gi * 0.06, gj * 0.06, 4);
+        totalHeight *= (1.0 - NOISE_STRENGTH * 0.5 + nv * NOISE_STRENGTH);
       }
-      colors.push(col[0]/255, col[1]/255, col[2]/255);
+
+      grid[gi * gridN + gj] = totalHeight;
     }
   }
 
-  // Triangles: center to first ring
-  for(let si=0; si<segs; si++){
-    const next = (si+1)%segs;
-    indices.push(0, 1+si, 1+next);
-  }
-
-  // Triangles: ring to ring
-  for(let ri=1; ri<totalRings; ri++){
-    const ringStart = 1 + (ri-1)*segs;
-    const nextRingStart = 1 + ri*segs;
-    for(let si=0; si<segs; si++){
-      const next = (si+1)%segs;
-      indices.push(ringStart+si, nextRingStart+si, nextRingStart+next);
-      indices.push(ringStart+si, nextRingStart+next, ringStart+next);
+  // Smoothing — 2 passes of 3x3 gaussian blur (same as v3)
+  for (let pass = 0; pass < 2; pass++) {
+    const temp = new Float32Array(gridN * gridN);
+    for (let i = 1; i < gridN - 1; i++) {
+      for (let j = 1; j < gridN - 1; j++) {
+        const idx = i * gridN + j;
+        temp[idx] =
+          grid[idx] * 0.40 +
+          grid[(i-1)*gridN+j] * 0.10 +
+          grid[(i+1)*gridN+j] * 0.10 +
+          grid[i*gridN+j-1] * 0.10 +
+          grid[i*gridN+j+1] * 0.10 +
+          grid[(i-1)*gridN+j-1] * 0.05 +
+          grid[(i+1)*gridN+j+1] * 0.05 +
+          grid[(i-1)*gridN+j+1] * 0.05 +
+          grid[(i+1)*gridN+j-1] * 0.05;
+      }
     }
+    for (let k = 0; k < grid.length; k++) if (temp[k] > 0) grid[k] = temp[k];
   }
 
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
+  return grid;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// COLORS — same as v3 (earthy ThemeScape palette)
+// ═══════════════════════════════════════════════════════════════════════
+function heightToColor(h) {
+  const t = h / maxH;
+  if (t > .85) return { r: .92, g: .87, b: .8 };
+  if (t > .65) return { r: .72, g: .62, b: .48 };
+  if (t > .45) return { r: .58, g: .65, b: .38 };
+  if (t > .25) return { r: .42, g: .58, b: .35 };
+  if (t > .1)  return { r: .35, g: .5, b: .32 };
+  if (t > .02) return { r: .28, g: .42, b: .28 };
+  return { r: .12, g: .18, b: .28 };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 2D RENDERING
+// ═══════════════════════════════════════════════════════════════════════
+const canvas2d = document.getElementById('canvas2d');
+const ctx = canvas2d.getContext('2d');
+let terrain2dCache = null;
+
+function resize2D() {
+  const p = canvas2d.parentElement;
+  canvas2d.width = p.clientWidth * devicePixelRatio;
+  canvas2d.height = p.clientHeight * devicePixelRatio;
+  canvas2d.style.width = p.clientWidth + 'px';
+  canvas2d.style.height = p.clientHeight + 'px';
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  terrain2dCache = null;
+}
+
+function draw2D() {
+  if (!TOPICS.length) return;
+  const W = canvas2d.width / devicePixelRatio, H = canvas2d.height / devicePixelRatio;
+  const xyLim = XYLIM;
+
+  if (!terrain2dCache) {
+    const gN = Math.min(400, Math.floor(Math.min(W, H)));
+    const td = generateTerrain(gN, xyLim);
+    const img = ctx.createImageData(gN, gN);
+    for (let i = 0; i < gN; i++) for (let j = 0; j < gN; j++) {
+      const h = td[i * gN + j], c = heightToColor(h), px = (j * gN + i) * 4;
+      img.data[px] = c.r * 255 | 0; img.data[px+1] = c.g * 255 | 0; img.data[px+2] = c.b * 255 | 0; img.data[px+3] = 255;
+    }
+    const off = document.createElement('canvas'); off.width = gN; off.height = gN;
+    off.getContext('2d').putImageData(img, 0, 0);
+    terrain2dCache = off;
+  }
+
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.fillStyle = '#0f1520'; ctx.fillRect(0, 0, W, H);
+  ctx.drawImage(terrain2dCache, 0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = 'rgba(100,120,100,0.06)'; ctx.lineWidth = 0.5;
+  const gs = W / 8;
+  for (let i = 0; i <= 8; i++) { ctx.beginPath(); ctx.moveTo(i*gs,0); ctx.lineTo(i*gs,H); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0,i*gs); ctx.lineTo(W,i*gs); ctx.stroke(); }
+  ctx.fillStyle = 'rgba(180,180,170,0.2)'; ctx.font = '10px DM Sans,sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  const letters = 'ABCDEFGH';
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) ctx.fillText(letters[c]+(r+1), c*gs+3, r*gs+3);
+
+  // Labels
+  for (let ti = 0; ti < TOPICS.length; ti++) {
+    const t = TOPICS[ti];
+    const px = ((t.x + xyLim) / (2 * xyLim)) * W;
+    const py = (1 - (t.y + xyLim) / (2 * xyLim)) * H;
+    const isH = ti === hoveredIdx, isS = ti === selectedIdx;
+    const fs = t.height > 0.2 ? 13 : t.height > 0.1 ? 11 : 10;
+    ctx.font = `${(isH||isS)?'bold ':''}${fs}px 'DM Sans',sans-serif`;
+    const tm = ctx.measureText(t.label), pad = 3;
+    ctx.fillStyle = 'rgba(255,255,245,0.72)';
+    ctx.fillRect(px - tm.width/2 - pad, py - fs/2 - pad, tm.width + pad*2, fs + pad*2);
+    if (isH || isS) { ctx.strokeStyle = isS ? '#cc6600' : '#445544'; ctx.lineWidth = 1.5; ctx.strokeRect(px - tm.width/2 - pad, py - fs/2 - pad, tm.width + pad*2, fs + pad*2); }
+    ctx.fillStyle = '#2a2a20'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(t.label, px, py);
+  }
+}
+
+canvas2d.addEventListener('mousemove', e => {
+  if (currentMode !== '2d' || !TOPICS.length) return;
+  const r = canvas2d.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, W = r.width, H = r.height;
+  let f = -1;
+  for (let i = 0; i < TOPICS.length; i++) { const t = TOPICS[i], px = ((t.x+XYLIM)/(2*XYLIM))*W, py = (1-(t.y+XYLIM)/(2*XYLIM))*H; if (Math.abs(mx-px)<55 && Math.abs(my-py)<12) f = i; }
+  hoveredIdx = f; canvas2d.style.cursor = f >= 0 ? 'pointer' : 'default'; draw2D();
+});
+canvas2d.addEventListener('click', () => { if (hoveredIdx >= 0) { selectedIdx = hoveredIdx; showInfo(TOPICS[hoveredIdx]); } else { selectedIdx = -1; closeInfo(); } draw2D(); });
+
+// ═══════════════════════════════════════════════════════════════════════
+// INFO PANEL
+// ═══════════════════════════════════════════════════════════════════════
+function showInfo(t) {
+  document.getElementById('infopanel').style.display = 'block';
+  document.getElementById('info-title').textContent = t.label;
+  document.getElementById('info-rel').textContent = (t.height / V3_MAX_HEIGHT * 100).toFixed(1) + '%';
+  document.getElementById('info-bar').style.width = (t.height / maxH * 100) + '%';
+  document.getElementById('info-sim').textContent = t.similarity.toFixed(3);
+  document.getElementById('info-source').textContent = t.source;
+  const wr = document.getElementById('info-wiki-row'), wl = document.getElementById('info-wiki');
+  if (t.wikipedia_url) { wr.style.display = 'block'; wl.href = t.wikipedia_url; } else { wr.style.display = 'none'; }
+}
+function closeInfo() { document.getElementById('infopanel').style.display = 'none'; selectedIdx = -1; if (currentMode === '2d') draw2D(); }
+
+// ═══════════════════════════════════════════════════════════════════════
+// 3D — same parameters as v3 (gridN=300, xyLim=0.55, heightScale=22)
+// ═══════════════════════════════════════════════════════════════════════
+function init3D() {
+  const c = document.getElementById('container3d'), W = c.clientWidth, H = c.clientHeight;
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x8aaabe); scene.fog = new THREE.FogExp2(0x8aaabe, 0.025);
+  const camera = new THREE.PerspectiveCamera(50, W/H, 0.1, 1000); camera.position.set(0, 12, 22); camera.lookAt(0, 0, 0);
+  const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setSize(W, H); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); c.appendChild(renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0x99aabb, 0.6));
+  const sun = new THREE.DirectionalLight(0xfff4e0, 1.0); sun.position.set(8, 15, 5); scene.add(sun);
+  const fill = new THREE.DirectionalLight(0x88aacc, 0.3); fill.position.set(-5, 8, -8); scene.add(fill);
+
+  // EXACT v3 parameters
+  const gridN = 300;
+  const xyLim = XYLIM;   // 0.55 — hardcoded like v3
+  const heightScale = 22; // same as v3
+
+  const td = generateTerrain(gridN, xyLim);
+  const geo = new THREE.PlaneGeometry(28, 28, gridN-1, gridN-1); geo.rotateX(-Math.PI / 2);
+  const verts = geo.attributes.position, colors = new Float32Array(verts.count * 3);
+
+  for (let i = 0; i < verts.count; i++) {
+    const ix = i % gridN, iy = Math.floor(i / gridN);
+    const h = td[iy * gridN + ix];
+    verts.setY(i, h * heightScale);
+    const co = heightToColor(h); colors[i*3] = co.r; colors[i*3+1] = co.g; colors[i*3+2] = co.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3)); geo.computeVertexNormals();
 
   const mat = new THREE.MeshPhongMaterial({
-    vertexColors: true,
-    shininess: 20,
-    specular: 0x222222,
-    side: THREE.DoubleSide,
-    flatShading: false,
+    vertexColors: true, shininess: 15, specular: 0x222222,
+    side: THREE.DoubleSide, flatShading: false,
   });
+  scene.add(new THREE.Mesh(geo, mat));
 
-  return new THREE.Mesh(geo, mat);
-}
+  // Ocean
+  const seaGeo = new THREE.PlaneGeometry(80, 80); seaGeo.rotateX(-Math.PI / 2);
+  const sea = new THREE.Mesh(seaGeo, new THREE.MeshPhongMaterial({ color: 0x3a5a7a, shininess: 60, specular: 0x446688, transparent: true, opacity: 0.85 }));
+  sea.position.y = -0.1; scene.add(sea);
 
-// ═══════════════════════════════════════════════════════════════
-// 2D MAP (circles with labels on a dark sea)
-// ═══════════════════════════════════════════════════════════════
-const canvas2d=document.getElementById('canvas2d'), ctx=canvas2d.getContext('2d');
-
-function resize2D(){const p=canvas2d.parentElement;canvas2d.width=p.clientWidth*devicePixelRatio;canvas2d.height=p.clientHeight*devicePixelRatio;canvas2d.style.width=p.clientWidth+'px';canvas2d.style.height=p.clientHeight+'px';ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0)}
-
-function draw2D(){
-  if(!TOPICS.length)return;
-  const W=canvas2d.width/devicePixelRatio, H=canvas2d.height/devicePixelRatio;
-  const pad=40;
-
-  // Sea background
-  ctx.fillStyle='#1a2a3a';ctx.fillRect(0,0,W,H);
-
-  // Map positions to pixels
-  const xExt=Math.max(...TOPICS.map(t=>Math.abs(t.x)),0.1)*1.3;
-  const yExt=Math.max(...TOPICS.map(t=>Math.abs(t.y)),0.1)*1.3;
-  const scale=Math.min((W-pad*2)/(xExt*2),(H-pad*2)/(yExt*2));
-  const ox=W/2, oy=H/2;
-
-  // Draw each island as a filled circle with gradient
-  const sorted=[...TOPICS.map((t,i)=>({...t,idx:i}))].sort((a,b)=>b.radius-a.radius);
-
-  for(const t of sorted){
-    const px=ox+t.x*scale, py=oy-t.y*scale;
-    const r=t.radius*scale;
-    const isH=t.idx===hoveredIdx, isS=t.idx===selectedIdx;
-
-    // Island body — concentric rings for topographic look
-    const nRings=5;
-    for(let ri=nRings;ri>=0;ri--){
-      const frac=ri/nRings;
-      const rr=r*(1-frac*0.05);
-      const col=heightColor(1-frac*0.8);
-      ctx.beginPath();ctx.arc(px,py,rr*frac+r*(1-frac),0,Math.PI*2);
-      // Actually draw concentric colored rings
-    }
-
-    // Gradient fill using tag palette
-    const tp = getTagPalette(t.tag);
-    const grd=ctx.createRadialGradient(px-r*0.2,py-r*0.2,r*0.1,px,py,r*1.1);
-    grd.addColorStop(0,`rgba(${tp.peak[0]},${tp.peak[1]},${tp.peak[2]},0.95)`);
-    grd.addColorStop(0.35,`rgba(${tp.mid[0]},${tp.mid[1]},${tp.mid[2]},0.9)`);
-    grd.addColorStop(0.7,`rgba(${tp.base[0]},${tp.base[1]},${tp.base[2]},0.8)`);
-    grd.addColorStop(1.0,`rgba(${Math.floor(tp.base[0]*0.7)},${Math.floor(tp.base[1]*0.7)},${Math.floor(tp.base[2]*0.7)},0.0)`);
-    ctx.beginPath();ctx.arc(px,py,r*1.1,0,Math.PI*2);ctx.fillStyle=grd;ctx.fill();
-
-    // Coastline contour
-    ctx.beginPath();ctx.arc(px,py,r,0,Math.PI*2);
-    ctx.strokeStyle=`rgba(${tp.base[0]},${tp.base[1]},${tp.base[2]},0.5)`;ctx.lineWidth=1.5;ctx.stroke();
-
-    // Inner contour
-    ctx.beginPath();ctx.arc(px,py,r*0.6,0,Math.PI*2);
-    ctx.strokeStyle=`rgba(${tp.mid[0]},${tp.mid[1]},${tp.mid[2]},0.25)`;ctx.lineWidth=0.8;ctx.stroke();
-
-    if(isH||isS){
-      ctx.beginPath();ctx.arc(px,py,r+3,0,Math.PI*2);
-      ctx.strokeStyle=isS?'#ff8844':'rgba(200,180,255,0.6)';ctx.lineWidth=2;ctx.stroke();
-    }
-
-    // Label
-    const fs=t.radius>0.15?13:t.radius>0.1?11:10;
-    ctx.font=`${(isH||isS)?'bold ':''}${fs}px 'DM Sans',sans-serif`;
-    const tm=ctx.measureText(t.label),lpad=3;
-    ctx.fillStyle='rgba(255,255,245,0.8)';
-    ctx.fillRect(px-tm.width/2-lpad,py-fs/2-lpad-2,tm.width+lpad*2,fs+lpad*2);
-    ctx.fillStyle='#2a2a20';ctx.textAlign='center';ctx.textBaseline='middle';
-    ctx.fillText(t.label,px,py-2);
-
-    // Shore markers — small labels around island perimeter
-    if(t.shore_markers && t.shore_markers.length){
-      const shelfR = r * 1.15;
-      const startA = (t.seed % 100) / 100 * Math.PI * 2;
-      const stepA = Math.PI * 2 / t.shore_markers.length;
-      ctx.font='9px DM Sans,sans-serif';
-      for(let mi=0;mi<t.shore_markers.length;mi++){
-        const a = startA + mi * stepA;
-        const mlx = px + shelfR * Math.cos(a);
-        const mly = py + shelfR * Math.sin(a);
-        const ml = t.shore_markers[mi].label;
-        const mtm = ctx.measureText(ml);
-        ctx.fillStyle='rgba(240,240,230,0.55)';
-        ctx.fillRect(mlx-mtm.width/2-2, mly-5, mtm.width+4, 12);
-        ctx.fillStyle='rgba(50,50,40,0.6)';ctx.textAlign='center';ctx.textBaseline='middle';
-        ctx.fillText(ml, mlx, mly);
-      }
-    }
+  // Labels
+  for (const t of TOPICS) {
+    if (t.height < V3_MIN_HEIGHT + 0.01) continue;
+    const cv = document.createElement('canvas'), cx = cv.getContext('2d'); cv.width = 512; cv.height = 72; cx.clearRect(0, 0, 512, 72);
+    const fs = t.height > 0.2 ? 26 : t.height > 0.1 ? 21 : 16;
+    cx.font = `bold ${fs}px 'DM Sans',sans-serif`;
+    const tm = cx.measureText(t.label), bw = Math.min(500, tm.width + 20), bx = 256 - bw/2;
+    cx.fillStyle = 'rgba(255,255,245,0.75)'; cx.beginPath(); cx.roundRect(bx, 10, bw, fs+14, 6); cx.fill();
+    cx.fillStyle = '#2a2a20'; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(t.label, 256, 10+(fs+14)/2);
+    const tex = new THREE.CanvasTexture(cv);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+    const sx = (t.x / xyLim) * 14;
+    const sz = -(t.y / xyLim) * 14;
+    sp.position.set(sx, t.height * heightScale + 2, sz);
+    sp.scale.set(7, 1, 1); scene.add(sp);
   }
-
-  // Grid overlay
-  ctx.strokeStyle='rgba(100,150,180,0.06)';ctx.lineWidth=0.5;
-  const gs=W/10;
-  for(let i=0;i<=10;i++){ctx.beginPath();ctx.moveTo(i*gs,0);ctx.lineTo(i*gs,H);ctx.stroke();ctx.beginPath();ctx.moveTo(0,i*gs);ctx.lineTo(W,i*gs);ctx.stroke()}
+  return { scene, camera, renderer };
 }
 
-canvas2d.addEventListener('mousemove',e=>{
-  if(currentMode!=='2d'||!TOPICS.length)return;
-  const r=canvas2d.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
-  const W=r.width,H=r.height,pad=40;
-  const xExt=Math.max(...TOPICS.map(t=>Math.abs(t.x)),0.1)*1.3;
-  const yExt=Math.max(...TOPICS.map(t=>Math.abs(t.y)),0.1)*1.3;
-  const scale=Math.min((W-pad*2)/(xExt*2),(H-pad*2)/(yExt*2));
-  const ox=W/2,oy=H/2;
-  let f=-1;
-  for(let i=0;i<TOPICS.length;i++){const t=TOPICS[i],px=ox+t.x*scale,py=oy-t.y*scale,rr=t.radius*scale;if(Math.sqrt((mx-px)**2+(my-py)**2)<rr+15)f=i}
-  hoveredIdx=f;canvas2d.style.cursor=f>=0?'pointer':'default';draw2D();
-});
-canvas2d.addEventListener('click',()=>{if(hoveredIdx>=0){selectedIdx=hoveredIdx;showInfo(TOPICS[hoveredIdx])}else{selectedIdx=-1;closeInfo()}draw2D()});
-
-// ═══════════════════════════════════════════════════════════════
-// INFO PANEL
-// ═══════════════════════════════════════════════════════════════
-function showInfo(t){
-  document.getElementById('infopanel').style.display='block';
-  document.getElementById('info-title').textContent=t.label;
-  document.getElementById('info-rel').textContent=(t.height/maxH*100).toFixed(1)+'%';
-  document.getElementById('info-bar').style.width=(t.height/maxH*100)+'%';
-  document.getElementById('info-sim').textContent=t.similarity.toFixed(3);
-  const tagLabel = TAG_PALETTES[t.tag] ? TAG_PALETTES[t.tag].label : t.tag;
-  document.getElementById('info-source').textContent=tagLabel + ' (cluster ' + (t.cluster||'?') + ')';
-  const wr=document.getElementById('info-wiki-row'),wl=document.getElementById('info-wiki');
-  if(t.wikipedia_url){wr.style.display='block';wl.href=t.wikipedia_url}else wr.style.display='none';
-}
-function closeInfo(){document.getElementById('infopanel').style.display='none';selectedIdx=-1;if(currentMode==='2d')draw2D()}
-
-// ═══════════════════════════════════════════════════════════════
-// 3D SCENE — DISCRETE ISLANDS
-// ═══════════════════════════════════════════════════════════════
-function init3D(){
-  const c=document.getElementById('container3d'),W=c.clientWidth,H=c.clientHeight;
-  const scene=new THREE.Scene();
-  scene.background=new THREE.Color(0x7aaabe);
-  scene.fog=new THREE.FogExp2(0x7aaabe, 0.012);
-
-  const camera=new THREE.PerspectiveCamera(50,W/H,0.1,500);
-  camera.position.set(0,15,25);camera.lookAt(0,0,0);
-
-  const renderer=new THREE.WebGLRenderer({antialias:true});
-  renderer.setSize(W,H);renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-  c.appendChild(renderer.domElement);
-
-  // Lighting
-  scene.add(new THREE.AmbientLight(0x99aabb,0.6));
-  const sun=new THREE.DirectionalLight(0xfff4e0,1.0);sun.position.set(8,15,5);scene.add(sun);
-  const fill=new THREE.DirectionalLight(0x88aacc,0.3);fill.position.set(-5,8,-8);scene.add(fill);
-
-  // Scene scale: maps our -1..1 coordinate range to Three.js world units
-  const SCENE_SCALE = 14;
-
-  // Ocean plane — raised to close gap with island shores
-  const seaGeo=new THREE.PlaneGeometry(120,120);seaGeo.rotateX(-Math.PI/2);
-  const sea=new THREE.Mesh(seaGeo,new THREE.MeshPhongMaterial({
-    color:0x2a4a6a, shininess:90, specular:0x334466,
-    transparent:true, opacity:0.92
-  }));
-  sea.position.y=0.05;scene.add(sea);
-
-  // Global max height for consistent coloring across all islands
-  const globalMaxH = Math.max(...TOPICS.map(t => t.height));
-
-  // Create each island as a SEPARATE mesh
-  for(const topic of TOPICS){
-    const island = createIslandMesh(topic, SCENE_SCALE, globalMaxH);
-    scene.add(island);
-
-    // Label sprite — positioned at island peak
-    const peakY = topic.height * SCENE_SCALE;
-    const worldX = topic.x * SCENE_SCALE;
-    const worldZ = -topic.y * SCENE_SCALE;
-
-    const cv=document.createElement('canvas'),cx=cv.getContext('2d');
-    cv.width=512;cv.height=64;cx.clearRect(0,0,512,64);
-    const fs=topic.radius>0.18?24:topic.radius>0.12?20:topic.radius>0.08?16:13;
-    cx.font=`bold ${fs}px 'DM Sans',sans-serif`;
-    const tm=cx.measureText(topic.label),bw=Math.min(500,tm.width+18),bx=256-bw/2;
-    cx.fillStyle='rgba(255,255,250,0.82)';
-    cx.beginPath();cx.roundRect(bx,8,bw,fs+12,5);cx.fill();
-    cx.strokeStyle='rgba(100,80,60,0.15)';cx.lineWidth=1;
-    cx.beginPath();cx.roundRect(bx,8,bw,fs+12,5);cx.stroke();
-    cx.fillStyle='#2a2a20';cx.textAlign='center';cx.textBaseline='middle';
-    cx.fillText(topic.label,256,8+(fs+12)/2);
-
-    const tex=new THREE.CanvasTexture(cv);
-    const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false}));
-    sp.position.set(worldX, peakY+1.2, worldZ);
-    sp.scale.set(6,0.75,1);
-    scene.add(sp);
-
-    // Shore markers — smaller labels placed around island perimeter
-    if(topic.shore_markers && topic.shore_markers.length > 0){
-      const shelfR = topic.radius * SCENE_SCALE * 1.15; // on the coastal shelf
-      const markerCount = topic.shore_markers.length;
-      const angleStep = (Math.PI * 2) / Math.max(markerCount, 1);
-      // Start angle offset based on seed so each island is different
-      const startAngle = (topic.seed % 100) / 100 * Math.PI * 2;
-
-      for(let mi=0; mi<markerCount; mi++){
-        const marker = topic.shore_markers[mi];
-        const angle = startAngle + mi * angleStep;
-        const mx = worldX + shelfR * Math.cos(angle);
-        const mz = worldZ + shelfR * Math.sin(angle);
-        const my = 0.4; // just above water on the shelf
-
-        const mcv=document.createElement('canvas'),mcx=mcv.getContext('2d');
-        mcv.width=256;mcv.height=36;mcx.clearRect(0,0,256,36);
-        const mfs=10;
-        mcx.font=`500 ${mfs}px 'DM Sans',sans-serif`;
-        const mtm=mcx.measureText(marker.label),mbw=Math.min(240,mtm.width+12),mbx=128-mbw/2;
-        mcx.fillStyle='rgba(240,240,235,0.6)';
-        mcx.beginPath();mcx.roundRect(mbx,6,mbw,mfs+8,3);mcx.fill();
-        mcx.fillStyle='rgba(50,50,40,0.7)';mcx.textAlign='center';mcx.textBaseline='middle';
-        mcx.fillText(marker.label,128,6+(mfs+8)/2);
-
-        const mtex=new THREE.CanvasTexture(mcv);
-        const msp=new THREE.Sprite(new THREE.SpriteMaterial({map:mtex,transparent:true,depthTest:false}));
-        msp.position.set(mx, my, mz);
-        msp.scale.set(3.5,0.5,1);
-        scene.add(msp);
-      }
-    }
-  }
-
-  return{scene,camera,renderer};
-}
-
-// ═══════════════════════════════════════════════════════════════
-// CONTROLS
-// ═══════════════════════════════════════════════════════════════
-let orbit={drag:false,lx:0,ly:0,theta:.3,phi:.85,dist:25};
-function updateOrbit(cam){cam.position.x=orbit.dist*Math.sin(orbit.phi)*Math.sin(orbit.theta);cam.position.y=orbit.dist*Math.cos(orbit.phi);cam.position.z=orbit.dist*Math.sin(orbit.phi)*Math.cos(orbit.theta);cam.lookAt(0,0,0)}
-function attachOrbit(cam,el){
+// ═══════════════════════════════════════════════════════════════════════
+// CONTROLS (same as v3)
+// ═══════════════════════════════════════════════════════════════════════
+let orbit = { drag: false, lx: 0, ly: 0, theta: .3, phi: .9, dist: 22 };
+function updateOrbit(cam) { cam.position.x = orbit.dist*Math.sin(orbit.phi)*Math.sin(orbit.theta); cam.position.y = orbit.dist*Math.cos(orbit.phi); cam.position.z = orbit.dist*Math.sin(orbit.phi)*Math.cos(orbit.theta); cam.lookAt(0,0,0); }
+function attachOrbit(cam, el) {
   updateOrbit(cam);
-  el.addEventListener('mousedown',e=>{orbit.drag=true;orbit.lx=e.clientX;orbit.ly=e.clientY});
-  el.addEventListener('mouseup',()=>orbit.drag=false);el.addEventListener('mouseleave',()=>orbit.drag=false);
-  el.addEventListener('mousemove',e=>{if(!orbit.drag||currentMode!=='3d')return;orbit.theta+=(e.clientX-orbit.lx)*.005;orbit.phi=Math.max(.1,Math.min(Math.PI*.48,orbit.phi-(e.clientY-orbit.ly)*.005));orbit.lx=e.clientX;orbit.ly=e.clientY;updateOrbit(cam)});
-  el.addEventListener('wheel',e=>{if(currentMode!=='3d')return;orbit.dist=Math.max(8,Math.min(60,orbit.dist+e.deltaY*.02));updateOrbit(cam);e.preventDefault()},{passive:false});
+  el.addEventListener('mousedown', e => { orbit.drag=true; orbit.lx=e.clientX; orbit.ly=e.clientY; });
+  el.addEventListener('mouseup', () => orbit.drag=false); el.addEventListener('mouseleave', () => orbit.drag=false);
+  el.addEventListener('mousemove', e => { if (!orbit.drag || currentMode !== '3d') return; orbit.theta += (e.clientX-orbit.lx)*.005; orbit.phi = Math.max(.1, Math.min(Math.PI*.48, orbit.phi-(e.clientY-orbit.ly)*.005)); orbit.lx=e.clientX; orbit.ly=e.clientY; updateOrbit(cam); });
+  el.addEventListener('wheel', e => { if (currentMode !== '3d') return; orbit.dist = Math.max(5, Math.min(50, orbit.dist+e.deltaY*.015)); updateOrbit(cam); e.preventDefault(); }, { passive: false });
 }
-const flyK={},flyM={drag:false,x:0,y:0};
-function attachFly(cam,el){
-  window.addEventListener('keydown',e=>{flyK[e.key.toLowerCase()]=true});window.addEventListener('keyup',e=>{flyK[e.key.toLowerCase()]=false});
-  el.addEventListener('mousedown',e=>{flyM.drag=true;flyM.x=e.clientX;flyM.y=e.clientY});
-  el.addEventListener('mouseup',()=>flyM.drag=false);el.addEventListener('mouseleave',()=>flyM.drag=false);
-  el.addEventListener('mousemove',e=>{if(!flyM.drag||currentMode!=='fly')return;cam.rotation.order='YXZ';cam.rotation.y-=(e.clientX-flyM.x)*.003;cam.rotation.x=Math.max(-Math.PI/3,Math.min(Math.PI/3,cam.rotation.x-(e.clientY-flyM.y)*.003));flyM.x=e.clientX;flyM.y=e.clientY});
+const flyK = {}, flyM = { drag: false, x: 0, y: 0 };
+function attachFly(cam, el) {
+  window.addEventListener('keydown', e => { flyK[e.key.toLowerCase()]=true; }); window.addEventListener('keyup', e => { flyK[e.key.toLowerCase()]=false; });
+  el.addEventListener('mousedown', e => { flyM.drag=true; flyM.x=e.clientX; flyM.y=e.clientY; });
+  el.addEventListener('mouseup', () => flyM.drag=false); el.addEventListener('mouseleave', () => flyM.drag=false);
+  el.addEventListener('mousemove', e => { if (!flyM.drag || currentMode !== 'fly') return; cam.rotation.order='YXZ'; cam.rotation.y -= (e.clientX-flyM.x)*.003; cam.rotation.x = Math.max(-Math.PI/3, Math.min(Math.PI/3, cam.rotation.x-(e.clientY-flyM.y)*.003)); flyM.x=e.clientX; flyM.y=e.clientY; });
 }
-function tickFly(cam){if(currentMode!=='fly')return;const s=.18,d=new THREE.Vector3;cam.getWorldDirection(d);const r=new THREE.Vector3().crossVectors(d,cam.up).normalize();if(flyK.w||flyK.arrowup)cam.position.addScaledVector(d,s);if(flyK.s||flyK.arrowdown)cam.position.addScaledVector(d,-s);if(flyK.a||flyK.arrowleft)cam.position.addScaledVector(r,-s);if(flyK.d||flyK.arrowright)cam.position.addScaledVector(r,s);if(flyK.q)cam.position.y+=s*.6;if(flyK.e)cam.position.y-=s*.6}
+function tickFly(cam) { if (currentMode !== 'fly') return; const s=.14, d=new THREE.Vector3; cam.getWorldDirection(d); const r=new THREE.Vector3().crossVectors(d,cam.up).normalize(); if(flyK.w||flyK.arrowup)cam.position.addScaledVector(d,s);if(flyK.s||flyK.arrowdown)cam.position.addScaledVector(d,-s);if(flyK.a||flyK.arrowleft)cam.position.addScaledVector(r,-s);if(flyK.d||flyK.arrowright)cam.position.addScaledVector(r,s);if(flyK.q)cam.position.y+=s*.6;if(flyK.e)cam.position.y-=s*.6; }
 
-// ═══════════════════════════════════════════════════════════════
-// DEBUG TABLE
-// ═══════════════════════════════════════════════════════════════
-function renderDebugTable(){
-  if(!lastData)return;const dv=document.getElementById('debug-view');let html='';
-  html+='<div class="debug-section"><h3>Named Entities Discovered ('+lastData.entities.length+')</h3>';
-  html+='<table class="debug-table ent-table"><tr><th>#</th><th>Entity</th><th>Type</th><th>Confidence</th></tr>';
-  lastData.entities.forEach((e,i)=>{const cls=e.confidence>0.8?'high':e.confidence>0.5?'mid':'low';html+=`<tr><td class="num">${i+1}</td><td>${e.name}</td><td>${e.type}</td><td class="num ${cls}">${e.confidence.toFixed(3)}</td></tr>`});
-  html+='</table></div>';
-  if(lastData.debug&&lastData.debug.length){
-    html+='<div class="debug-section"><h3>Topic Pipeline Debug ('+lastData.debug.length+')</h3>';
-    html+='<table class="debug-table"><tr><th>#</th><th>Topic</th><th>Source</th><th>Tag</th><th>Cluster</th><th>Salience</th><th>Size</th><th>Sim→Article</th><th>Sim→Entities</th><th>TF-IDF</th><th>Height</th><th>X</th><th>Y</th></tr>';
-    lastData.debug.forEach((d,i)=>{html+=`<tr><td class="num">${i+1}</td><td>${d.title}</td><td>${d.source}</td><td>${d.tag||''}</td><td class="num">${d.cluster||''}</td><td class="num ${(d.salience||0)>0.3?'high':(d.salience||0)>0.1?'mid':'low'}">${(d.salience||0).toFixed(4)}</td><td class="num">${(d.size||0).toFixed(1)}</td><td class="num">${d.sim_article}</td><td class="num">${d.sim_entities}</td><td class="num">${d.tfidf}</td><td class="num">${d.final_height}</td><td class="num">${d.x_final||d.x}</td><td class="num">${d.y_final||d.y}</td></tr>`});
-    html+='</table></div>';
-  }
-  html+='<div class="debug-section"><h3>Final Islands ('+TOPICS.length+') + Shore Markers</h3>';
-  html+='<table class="debug-table"><tr><th>#</th><th>Label</th><th>Tag</th><th>Cluster</th><th>Radius</th><th>Height</th><th>Shore Markers</th></tr>';
-  TOPICS.forEach((t,i)=>{
-    const sm = t.shore_markers||[];
-    const smNames = sm.map(m=>`${m.label} [${m.tag||''}]`).join(', ');
-    html+=`<tr><td class="num">${i+1}</td><td><strong>${t.label}</strong></td><td>${t.tag}</td><td class="num">${t.cluster}</td><td class="num">${t.radius.toFixed(4)}</td><td class="num ${t.height>0.15?'high':t.height>0.08?'mid':'low'}">${t.height.toFixed(4)}</td><td style="font-size:10px;max-width:300px;white-space:normal">${sm.length ? `(${sm.length}) ${smNames}` : '-'}</td></tr>`;
-  });
-  });
-  html+='</table></div>';
-  dv.innerHTML=html;
-}
-
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
 // MODE SWITCHING
-// ═══════════════════════════════════════════════════════════════
-const hints={'2d':'Hover & click topics','3d':'Drag to orbit · Scroll to zoom','fly':'WASD move · Mouse look · Q/E altitude','debug':'Pipeline debug data'};
-function switchMode(mode){currentMode=mode;document.getElementById('hint').textContent=hints[mode];closeInfo();document.querySelectorAll('#mode-switcher button').forEach((b,i)=>b.classList.toggle('active',['2d','3d','fly','debug'][i]===mode));renderCurrent()}
-
-function renderCurrent(){
-  if(!TOPICS.length)return;
-  const dv=document.getElementById('debug-view');
-  canvas2d.style.display='none';document.getElementById('container3d').style.display='none';dv.classList.remove('active');
-  if(animFrame)cancelAnimationFrame(animFrame);
-
-  if(currentMode==='debug'){dv.classList.add('active');renderDebugTable();return}
-  if(currentMode==='2d'){canvas2d.style.display='block';resize2D();draw2D();return}
-
-  const c3=document.getElementById('container3d');c3.style.display='block';c3.innerHTML='';
-  const{scene,camera,renderer}=init3D();
-  attachOrbit(camera,renderer.domElement);attachFly(camera,renderer.domElement);
-  if(currentMode==='3d'){orbit={drag:false,lx:0,ly:0,theta:.3,phi:.85,dist:25};updateOrbit(camera)}
-  else{camera.position.set(-10,5,15);camera.rotation.order='YXZ';camera.lookAt(0,2,0)}
-  c3.focus();
-  function anim(){animFrame=requestAnimationFrame(anim);tickFly(camera);renderer.render(scene,camera)}anim();
-  window.onresize=()=>{camera.aspect=c3.clientWidth/c3.clientHeight;camera.updateProjectionMatrix();renderer.setSize(c3.clientWidth,c3.clientHeight)};
+// ═══════════════════════════════════════════════════════════════════════
+const hints = { '2d': 'Hover & click topics', '3d': 'Drag to orbit · Scroll to zoom', 'fly': 'WASD move · Mouse look · Q/E altitude' };
+function switchMode(mode) {
+  currentMode = mode;
+  document.getElementById('hint').textContent = hints[mode]; closeInfo();
+  document.querySelectorAll('#mode-switcher button').forEach((b,i) => b.classList.toggle('active', ['2d','3d','fly'][i]===mode));
+  renderCurrent();
+}
+function renderCurrent() {
+  if (!TOPICS.length) return;
+  if (currentMode === '2d') {
+    canvas2d.style.display = 'block'; document.getElementById('container3d').style.display = 'none';
+    if (animFrame) cancelAnimationFrame(animFrame); resize2D(); draw2D();
+  } else {
+    canvas2d.style.display = 'none'; const c3 = document.getElementById('container3d'); c3.style.display = 'block';
+    if (animFrame) cancelAnimationFrame(animFrame); c3.innerHTML = '';
+    const { scene, camera, renderer } = init3D(); attachOrbit(camera, renderer.domElement); attachFly(camera, renderer.domElement);
+    if (currentMode === '3d') { orbit = { drag:false, lx:0, ly:0, theta:.3, phi:.9, dist:22 }; updateOrbit(camera); }
+    else { camera.position.set(-12, 6, 18); camera.rotation.order = 'YXZ'; camera.lookAt(0, 3, 0); }
+    c3.focus();
+    function anim() { animFrame = requestAnimationFrame(anim); tickFly(camera); renderer.render(scene, camera); } anim();
+    window.onresize = () => { camera.aspect = c3.clientWidth/c3.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(c3.clientWidth, c3.clientHeight); };
+  }
 }
 
-window.addEventListener('load',()=>{resize2D();window.addEventListener('resize',()=>{if(currentMode==='2d'){resize2D();draw2D()}})});
+window.addEventListener('load', () => { resize2D(); window.addEventListener('resize', () => { if (currentMode === '2d') { resize2D(); draw2D(); } }); });
 </script>
 </body>
 </html>
