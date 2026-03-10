@@ -79,6 +79,16 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
 .leg-title{font-weight:700;color:#e0dce8;letter-spacing:0.04em;margin-bottom:4px}
 .leg-bar{width:70px;height:6px;border-radius:3px;background:linear-gradient(90deg,#3a6b35,#6b8f47,#a0a070,#8b7355,#e8dcc8);display:inline-block;vertical-align:middle;margin-right:5px}
 #toggle-panel{position:absolute;top:50%;left:0;transform:translateY(-50%);width:20px;height:50px;background:rgba(20,15,45,0.8);border:1px solid rgba(100,80,200,0.15);border-left:none;border-radius:0 6px 6px 0;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:15;color:rgba(180,170,220,0.5);font-size:12px}
+#debug-view{display:none;position:absolute;inset:0;background:rgba(10,10,20,0.97);z-index:12;overflow:auto;padding:20px}
+#debug-view.active{display:block}
+#debug-view h3{color:#cc44ff;font-size:14px;margin-bottom:12px;font-weight:700}
+.debug-section{margin-bottom:24px}
+.debug-table{width:100%;border-collapse:collapse;font-size:11px;font-family:'JetBrains Mono',monospace}
+.debug-table th{background:rgba(100,80,200,0.2);color:#e0dce8;padding:6px 8px;text-align:left;position:sticky;top:0;font-weight:600;white-space:nowrap}
+.debug-table td{padding:5px 8px;border-bottom:1px solid rgba(100,80,200,0.08);color:rgba(200,195,220,0.8);white-space:nowrap}
+.debug-table tr:hover td{background:rgba(100,80,200,0.06)}
+.debug-table .num{text-align:right;font-variant-numeric:tabular-nums}
+.high{color:#ff8844;font-weight:600}.mid{color:#cc44ff}.low{color:rgba(140,130,180,0.5)}
 </style>
 </head>
 <body>
@@ -90,6 +100,7 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
       <button class="active" onclick="switchMode('2d')">2D Map</button>
       <button onclick="switchMode('3d')">3D Terrain</button>
       <button onclick="switchMode('fly')">Fly-Through</button>
+      <button onclick="switchMode('debug')">Debug Table</button>
     </div>
     <div class="hint" id="hint"></div>
   </div>
@@ -126,6 +137,7 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
     <div id="empty-state"><div class="empty-icon">&#9968;</div><div class="empty-title">No analysis yet</div><div class="empty-sub">Paste text or upload a document to generate a topic terrain visualization</div></div>
     <canvas id="canvas2d"></canvas>
     <div id="container3d" tabindex="0"></div>
+    <div id="debug-view"></div>
     <div id="toggle-panel" onclick="togglePanel()">&#9664;</div>
     <div id="infopanel">
       <div class="cat">Topic Details</div><div class="title" id="info-title"></div>
@@ -149,7 +161,8 @@ let TOPICS = [];
 let currentMode = '2d';
 let hoveredIdx = -1, selectedIdx = -1;
 let animFrame = null;
-let maxH = 0.28;  // Will be set after normalization
+let maxH = 0.28;
+let lastData = null;
 const API_BASE = window.location.origin;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -169,7 +182,7 @@ const API_BASE = window.location.origin;
 //   min_height         = 0.038
 // ═══════════════════════════════════════════════════════════════════════
 
-const V3_SIZE_RATIO = 0.36;    // largest topic = 36% of xyLim
+const V3_SIZE_RATIO = 0.25;    // largest topic = 25% of xyLim (was 36%, too bulky)
 const V3_MAX_HEIGHT = 0.28;    // tallest peak in v3
 const V3_MIN_HEIGHT = 0.035;   // shortest hill in v3
 const XYLIM = 0.55;            // hardcoded like v3
@@ -234,6 +247,7 @@ async function runAnalysis() {
     }
     if (!response.ok) { const err = await response.json().catch(() => ({ detail: 'Server error' })); throw new Error(err.detail || `Server returned ${response.status}`); }
     const data = await response.json();
+    lastData = data;
     updateLoadingStep('Generating terrain visualization...');
     await new Promise(r => setTimeout(r, 300));
     processResults(data);
@@ -256,7 +270,7 @@ function processResults(data) {
     ...raw.map(t => Math.abs(t.y)),
     0.01
   );
-  const posScale = (XYLIM * 0.8) / maxAbsPos;
+  const posScale = (XYLIM * 0.95) / maxAbsPos;
 
   // ── Step 2: Normalize sizes to match v3 ratio ─────────────────────
   // V3: largest size was 0.198, which is 36% of xyLim (0.55)
@@ -264,7 +278,7 @@ function processResults(data) {
   const maxRawSize = Math.max(...raw.map(t => t.size), 0.001);
   const minRawSize = Math.min(...raw.map(t => t.size), 0.001);
   const targetMaxSize = XYLIM * V3_SIZE_RATIO;   // 0.198
-  const targetMinSize = XYLIM * 0.08;             // 0.044
+  const targetMinSize = XYLIM * 0.05;             // 0.028
 
   // ── Step 3: Normalize heights to v3 range (0.035 to 0.28) ────────
   // API returns 0-1 normalized. V3 used raw 0.038-0.28.
@@ -296,6 +310,9 @@ function processResults(data) {
       source: t.source || '',
       similarity: t.similarity || 0,
       seed: Math.abs(Math.sin(nx * 127.1 + ny * 311.7) * 43758.5453) % 1000,
+      shore_markers: t.shore_markers || [],
+      tag: t.tag || 'MISC',
+      cluster: t.cluster || 1,
     };
   });
 
@@ -600,6 +617,31 @@ function init3D() {
     const sz = -(t.y / xyLim) * 14;
     sp.position.set(sx, t.height * heightScale + 2, sz);
     sp.scale.set(7, 1, 1); scene.add(sp);
+
+    // Shore markers — small labels around island perimeter
+    if (t.shore_markers && t.shore_markers.length > 0) {
+      const shoreR = t.size * (1 / xyLim) * 14 * 1.1;
+      const startAngle = (t.seed % 100) / 100 * Math.PI * 2;
+      const angleStep = (Math.PI * 2) / t.shore_markers.length;
+      for (let mi = 0; mi < t.shore_markers.length; mi++) {
+        const m = t.shore_markers[mi];
+        const ang = startAngle + mi * angleStep;
+        const mx = sx + shoreR * Math.cos(ang);
+        const mz = sz + shoreR * Math.sin(ang);
+        const mcv = document.createElement('canvas'), mcx = mcv.getContext('2d');
+        mcv.width = 256; mcv.height = 36; mcx.clearRect(0, 0, 256, 36);
+        mcx.font = '500 11px DM Sans,sans-serif';
+        const mtm = mcx.measureText(m.label), mbw = Math.min(240, mtm.width + 12), mbx = 128 - mbw/2;
+        mcx.fillStyle = 'rgba(240,240,235,0.6)';
+        mcx.beginPath(); mcx.roundRect(mbx, 6, mbw, 18, 3); mcx.fill();
+        mcx.fillStyle = 'rgba(50,50,40,0.7)'; mcx.textAlign = 'center'; mcx.textBaseline = 'middle';
+        mcx.fillText(m.label, 128, 15);
+        const mtex = new THREE.CanvasTexture(mcv);
+        const msp = new THREE.Sprite(new THREE.SpriteMaterial({ map: mtex, transparent: true, depthTest: false }));
+        msp.position.set(mx, 0.5, mz);
+        msp.scale.set(3.5, 0.5, 1); scene.add(msp);
+      }
+    }
   }
   return { scene, camera, renderer };
 }
@@ -628,28 +670,67 @@ function tickFly(cam) { if (currentMode !== 'fly') return; const s=.14, d=new TH
 // ═══════════════════════════════════════════════════════════════════════
 // MODE SWITCHING
 // ═══════════════════════════════════════════════════════════════════════
-const hints = { '2d': 'Hover & click topics', '3d': 'Drag to orbit · Scroll to zoom', 'fly': 'WASD move · Mouse look · Q/E altitude' };
+const hints = { '2d': 'Hover & click topics', '3d': 'Drag to orbit · Scroll to zoom', 'fly': 'WASD move · Mouse look · Q/E altitude', 'debug': 'Pipeline debug data' };
 function switchMode(mode) {
   currentMode = mode;
   document.getElementById('hint').textContent = hints[mode]; closeInfo();
-  document.querySelectorAll('#mode-switcher button').forEach((b,i) => b.classList.toggle('active', ['2d','3d','fly'][i]===mode));
+  document.querySelectorAll('#mode-switcher button').forEach((b,i) => b.classList.toggle('active', ['2d','3d','fly','debug'][i]===mode));
   renderCurrent();
 }
 function renderCurrent() {
   if (!TOPICS.length) return;
+  const dv = document.getElementById('debug-view');
+  canvas2d.style.display = 'none'; document.getElementById('container3d').style.display = 'none'; dv.classList.remove('active');
+  if (animFrame) cancelAnimationFrame(animFrame);
+
+  if (currentMode === 'debug') { dv.classList.add('active'); renderDebugTable(); return; }
   if (currentMode === '2d') {
-    canvas2d.style.display = 'block'; document.getElementById('container3d').style.display = 'none';
-    if (animFrame) cancelAnimationFrame(animFrame); resize2D(); draw2D();
-  } else {
-    canvas2d.style.display = 'none'; const c3 = document.getElementById('container3d'); c3.style.display = 'block';
-    if (animFrame) cancelAnimationFrame(animFrame); c3.innerHTML = '';
-    const { scene, camera, renderer } = init3D(); attachOrbit(camera, renderer.domElement); attachFly(camera, renderer.domElement);
-    if (currentMode === '3d') { orbit = { drag:false, lx:0, ly:0, theta:.3, phi:.9, dist:22 }; updateOrbit(camera); }
-    else { camera.position.set(-12, 6, 18); camera.rotation.order = 'YXZ'; camera.lookAt(0, 3, 0); }
-    c3.focus();
-    function anim() { animFrame = requestAnimationFrame(anim); tickFly(camera); renderer.render(scene, camera); } anim();
-    window.onresize = () => { camera.aspect = c3.clientWidth/c3.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(c3.clientWidth, c3.clientHeight); };
+    canvas2d.style.display = 'block'; resize2D(); draw2D(); return;
   }
+  const c3 = document.getElementById('container3d'); c3.style.display = 'block'; c3.innerHTML = '';
+  const { scene, camera, renderer } = init3D(); attachOrbit(camera, renderer.domElement); attachFly(camera, renderer.domElement);
+  if (currentMode === '3d') { orbit = { drag:false, lx:0, ly:0, theta:.3, phi:.9, dist:22 }; updateOrbit(camera); }
+  else { camera.position.set(-12, 6, 18); camera.rotation.order = 'YXZ'; camera.lookAt(0, 3, 0); }
+  c3.focus();
+  function anim() { animFrame = requestAnimationFrame(anim); tickFly(camera); renderer.render(scene, camera); } anim();
+  window.onresize = () => { camera.aspect = c3.clientWidth/c3.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(c3.clientWidth, c3.clientHeight); };
+}
+
+function renderDebugTable() {
+  if (!lastData) return;
+  const dv = document.getElementById('debug-view');
+  let html = '';
+
+  // Entities
+  html += '<div class="debug-section"><h3>Named Entities Discovered (' + lastData.entities.length + ')</h3>';
+  html += '<table class="debug-table"><tr><th>#</th><th>Entity</th><th>Type</th><th>Confidence</th></tr>';
+  lastData.entities.forEach((e, i) => {
+    const cls = e.confidence > 0.5 ? 'high' : e.confidence > 0.2 ? 'mid' : 'low';
+    html += '<tr><td class="num">' + (i+1) + '</td><td>' + e.name + '</td><td>' + e.type + '</td><td class="num ' + cls + '">' + e.confidence.toFixed(3) + '</td></tr>';
+  });
+  html += '</table></div>';
+
+  // Debug pipeline
+  if (lastData.debug && lastData.debug.length) {
+    html += '<div class="debug-section"><h3>Topic Pipeline Debug (' + lastData.debug.length + ' candidates)</h3>';
+    html += '<table class="debug-table"><tr><th>#</th><th>Topic</th><th>Source</th><th>Tag</th><th>Cluster</th><th>Salience</th><th>Size</th><th>Sim→Article</th><th>Sim→Entities</th><th>TF-IDF</th><th>Height</th><th>X</th><th>Y</th></tr>';
+    lastData.debug.forEach((d, i) => {
+      html += '<tr><td class="num">' + (i+1) + '</td><td>' + d.title + '</td><td>' + d.source + '</td><td>' + (d.tag||'') + '</td><td class="num">' + (d.cluster||'') + '</td><td class="num">' + (d.salience||0).toFixed(4) + '</td><td class="num">' + (d.size||0).toFixed(1) + '</td><td class="num">' + d.sim_article + '</td><td class="num">' + d.sim_entities + '</td><td class="num">' + d.tfidf + '</td><td class="num">' + d.final_height + '</td><td class="num">' + (d.x_final||d.x) + '</td><td class="num">' + (d.y_final||d.y) + '</td></tr>';
+    });
+    html += '</table></div>';
+  }
+
+  // Final topics with shore markers
+  html += '<div class="debug-section"><h3>Final Topics (' + TOPICS.length + ') + Shore Markers</h3>';
+  html += '<table class="debug-table"><tr><th>#</th><th>Label</th><th>Size</th><th>Height</th><th>Shore Markers</th></tr>';
+  TOPICS.forEach((t, i) => {
+    const sm = t.shore_markers || [];
+    const smNames = sm.map(m => m.label).join(', ');
+    html += '<tr><td class="num">' + (i+1) + '</td><td><strong>' + t.label + '</strong></td><td class="num">' + t.size.toFixed(4) + '</td><td class="num">' + t.height.toFixed(4) + '</td><td style="font-size:10px;max-width:400px;white-space:normal">' + (sm.length ? '(' + sm.length + ') ' + smNames : '-') + '</td></tr>';
+  });
+  html += '</table></div>';
+
+  dv.innerHTML = html;
 }
 
 window.addEventListener('load', () => { resize2D(); window.addEventListener('resize', () => { if (currentMode === '2d') { resize2D(); draw2D(); } }); });

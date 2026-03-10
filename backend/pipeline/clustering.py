@@ -1,6 +1,6 @@
 """
-Topic processing: splits into islands + shore markers.
-All entities appear. Passes through tag and cluster.
+Topic processing: main topics as islands, smaller ones as shore markers.
+ALL entities appear in visualization.
 """
 
 import numpy as np
@@ -12,7 +12,7 @@ def process_topics(candidates: list[dict]) -> list[dict]:
 
     sorted_cands = sorted(candidates, key=lambda c: c["size"], reverse=True)
 
-    # Top 40% by size become islands (min 3, max 15)
+    # Top 40% become islands (min 3, max 15)
     n_islands = max(3, min(15, int(len(sorted_cands) * 0.4)))
     islands = sorted_cands[:n_islands]
     shore_candidates = sorted_cands[n_islands:]
@@ -24,7 +24,6 @@ def process_topics(candidates: list[dict]) -> list[dict]:
             c["height"] = c["height"] / max_h
 
     for c in islands:
-        c["role"] = "island"
         c["shore_markers"] = []
 
     # Assign shore candidates to nearest island
