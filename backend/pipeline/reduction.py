@@ -25,7 +25,7 @@ except ImportError:
     HAS_HDBSCAN = False
 
 
-def force_directed_repulsion(candidates, iterations=700, min_distance=0.255, repulsion=0.005, damping=0.86, center_pull=0.00015):
+def force_directed_repulsion(candidates, iterations=800, min_distance=0.35, repulsion=0.008, damping=0.85, center_pull=0.0001):
     pts = [{"x": c["x"], "y": c["y"], "vx": 0, "vy": 0, "size": c.get("size", 0.05)} for c in candidates]
     for _ in range(iterations):
         for p in pts:
@@ -35,7 +35,9 @@ def force_directed_repulsion(candidates, iterations=700, min_distance=0.255, rep
                 dx = pts[i]["x"] - pts[j]["x"]
                 dy = pts[i]["y"] - pts[j]["y"]
                 dist = max(np.sqrt(dx * dx + dy * dy), 0.001)
-                sz_factor = (pts[i]["size"] + pts[j]["size"]) * 2.0
+                # Size factor: sqrt of combined sizes (matches D3's scaleSqrt)
+                # Sizes are 0.05-0.8 range from original formula
+                sz_factor = np.sqrt(pts[i]["size"] + pts[j]["size"]) * 0.6
                 min_d = min_distance + sz_factor
                 if dist < min_d:
                     force = repulsion * (min_d - dist) / dist

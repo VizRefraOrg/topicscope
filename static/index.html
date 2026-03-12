@@ -203,43 +203,34 @@ function processResults(data) {
   if (!raw.length) return;
 
   // ── Build D3-compatible entity list (for scatter + force) ─────
-  // Also include shore markers as smaller entities
-  RAW_ENTITIES = [];
-  raw.forEach(t => {
-    RAW_ENTITIES.push({
-      entity: t.label, x: t.x, y: t.y,
-      size: t.size, tag: t.tag || 'MISC',
-      cluster: t.cluster || 1, salience: t.salience || 0,
-    });
-    (t.shore_markers || []).forEach(sm => {
-      RAW_ENTITIES.push({
-        entity: sm.label, x: t.x + (Math.random()-0.5)*0.1, y: t.y + (Math.random()-0.5)*0.1,
-        size: sm.size * 0.3, tag: sm.tag || t.tag || 'MISC',
-        cluster: t.cluster || 1, salience: 0.01,
-      });
-    });
-  });
+  // ALL entities are now top-level topics with their own x,y
+  RAW_ENTITIES = raw.map(t => ({
+    entity: t.label, x: t.x, y: t.y,
+    size: t.size, tag: t.tag || 'MISC',
+    cluster: t.cluster || 1, salience: t.salience || 0,
+  }));
 
-  // ── Build terrain topics (normalized for 3D) ─────────────────
-  const maxAbsPos = Math.max(...raw.map(t=>Math.abs(t.x)),...raw.map(t=>Math.abs(t.y)),0.01);
-  const posScale = (XYLIM * 0.95) / maxAbsPos;
+  // ── Build terrain topics — use SAME x,y as 2D scatter ──────────
+  // Size and height normalized for terrain rendering
   const maxRawSize = Math.max(...raw.map(t=>t.size),0.001);
   const minRawSize = Math.min(...raw.map(t=>t.size),0.001);
-  const targetMaxSize = XYLIM * V3_SIZE_RATIO;
-  const targetMinSize = XYLIM * 0.06;
   const maxRawH = Math.max(...raw.map(t=>t.height),0.01);
+  // Compute data spread for size scaling
+  const dataSpread = Math.max(...raw.map(t=>Math.abs(t.x)),...raw.map(t=>Math.abs(t.y)),0.5);
 
   TOPICS = raw.map(t => {
-    const nx = t.x * posScale, ny = t.y * posScale;
+    // Position: RAW from API (same as D3 scatter uses)
     const sizeT = (maxRawSize>minRawSize)?(t.size-minRawSize)/(maxRawSize-minRawSize):0.5;
-    const nsize = targetMinSize + sizeT * (targetMaxSize - targetMinSize);
+    // Size proportional to data spread (so footprints scale with the map)
+    const nsize = dataSpread * (0.04 + sizeT * 0.15);
     const heightT = t.height / maxRawH;
     const nheight = V3_MIN_HEIGHT + heightT * (V3_MAX_HEIGHT - V3_MIN_HEIGHT);
     return {
-      label: t.label, x: nx, y: ny, size: nsize, height: nheight,
+      label: t.label, x: t.x, y: t.y,  // RAW positions — same as 2D
+      size: nsize, height: nheight,
       wikipedia_url: t.wikipedia_url || '', source: t.source || '', similarity: t.similarity || 0,
-      seed: Math.abs(Math.sin(nx*127.1+ny*311.7)*43758.5453) % 1000,
-      shore_markers: t.shore_markers || [], tag: t.tag||'MISC', cluster: t.cluster||1,
+      seed: Math.abs(Math.sin(t.x*127.1+t.y*311.7)*43758.5453) % 1000,
+      tag: t.tag||'MISC', cluster: t.cluster||1,
     };
   });
   maxH = Math.max(...TOPICS.map(t=>t.height));
@@ -523,9 +514,14 @@ function init3D(){
   scene.add(new THREE.AmbientLight(0x99aabb,0.6));
   const sun=new THREE.DirectionalLight(0xfff4e0,1);sun.position.set(8,15,5);scene.add(sun);
   const fill=new THREE.DirectionalLight(0x88aacc,0.3);fill.position.set(-5,8,-8);scene.add(fill);
-  const gridN=200,xyLim=XYLIM,heightScale=22;
+
+  // Compute xyLim from actual data range (matches 2D scatter extent)
+  const dataXYLim = Math.max(...TOPICS.map(t=>Math.abs(t.x)),...TOPICS.map(t=>Math.abs(t.y)),0.5) * 1.3;
+  const gridN=200, xyLim=dataXYLim, heightScale=22;
+  const planeSize = 28;
+
   const td=generateTerrain(gridN,xyLim);
-  const geo=new THREE.PlaneGeometry(28,28,gridN-1,gridN-1);geo.rotateX(-Math.PI/2);
+  const geo=new THREE.PlaneGeometry(planeSize,planeSize,gridN-1,gridN-1);geo.rotateX(-Math.PI/2);
   const verts=geo.attributes.position,colors=new Float32Array(verts.count*3);
   for(let i=0;i<verts.count;i++){const ix=i%gridN,iy=Math.floor(i/gridN);const h=td[iy*gridN+ix];verts.setY(i,h*heightScale);const co=heightToColor(h);colors[i*3]=co.r;colors[i*3+1]=co.g;colors[i*3+2]=co.b}
   geo.setAttribute('color',new THREE.BufferAttribute(colors,3));geo.computeVertexNormals();
@@ -534,7 +530,8 @@ function init3D(){
   const seaGeo=new THREE.PlaneGeometry(80,80);seaGeo.rotateX(-Math.PI/2);
   const sea=new THREE.Mesh(seaGeo,new THREE.MeshPhongMaterial({color:0x3a5a7a,shininess:60,specular:0x446688,transparent:true,opacity:0.85}));
   sea.position.y=-0.1;scene.add(sea);
-  // Labels + shore markers
+  // Labels — position using same mapping as terrain grid
+  const halfPlane = planeSize / 2;
   for(const t of TOPICS){
     if(t.height<V3_MIN_HEIGHT+0.01)continue;
     const cv=document.createElement('canvas'),cx=cv.getContext('2d');cv.width=512;cv.height=72;cx.clearRect(0,0,512,72);
@@ -545,21 +542,9 @@ function init3D(){
     cx.fillStyle='#2a2a20';cx.textAlign='center';cx.textBaseline='middle';cx.fillText(t.label,256,10+(fs+14)/2);
     const tex=new THREE.CanvasTexture(cv);
     const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false}));
-    const sx=(t.x/xyLim)*14,sz=-(t.y/xyLim)*14;
+    // Map raw x,y to Three.js world coords (same mapping as terrain grid)
+    const sx=(t.x/xyLim)*halfPlane, sz=-(t.y/xyLim)*halfPlane;
     sp.position.set(sx,t.height*heightScale+2,sz);sp.scale.set(7,1,1);scene.add(sp);
-    // Shore markers
-    if(t.shore_markers&&t.shore_markers.length){
-      const shR=t.size*(1/xyLim)*14*1.1,sA=(t.seed%100)/100*Math.PI*2,step=Math.PI*2/t.shore_markers.length;
-      for(let mi=0;mi<t.shore_markers.length;mi++){
-        const m=t.shore_markers[mi],a=sA+mi*step;
-        const mcv=document.createElement('canvas'),mcx=mcv.getContext('2d');mcv.width=256;mcv.height=36;mcx.clearRect(0,0,256,36);
-        mcx.font='500 11px DM Sans,sans-serif';const mtm=mcx.measureText(m.label),mbw=Math.min(240,mtm.width+12),mbx=128-mbw/2;
-        mcx.fillStyle='rgba(240,240,235,0.6)';mcx.beginPath();mcx.roundRect(mbx,6,mbw,18,3);mcx.fill();
-        mcx.fillStyle='rgba(50,50,40,0.7)';mcx.textAlign='center';mcx.textBaseline='middle';mcx.fillText(m.label,128,15);
-        const mtex=new THREE.CanvasTexture(mcv),msp=new THREE.Sprite(new THREE.SpriteMaterial({map:mtex,transparent:true,depthTest:false}));
-        msp.position.set(sx+shR*Math.cos(a),0.5,sz+shR*Math.sin(a));msp.scale.set(3.5,0.5,1);scene.add(msp);
-      }
-    }
   }
   return{scene,camera,renderer};
 }
