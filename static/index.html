@@ -100,6 +100,7 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
       <button class="active" onclick="switchMode('2d')">2D Map</button>
       <button onclick="switchMode('3d')">3D Terrain</button>
       <button onclick="switchMode('fly')">Fly-Through</button>
+      <button onclick="switchMode('force')">Force Graph</button>
       <button onclick="switchMode('debug')">Debug Table</button>
     </div>
     <div class="hint" id="hint"></div>
@@ -137,6 +138,7 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
     <div id="empty-state"><div class="empty-icon">&#9968;</div><div class="empty-title">No analysis yet</div><div class="empty-sub">Paste text or upload a document to generate a topic terrain visualization</div></div>
     <canvas id="canvas2d"></canvas>
     <div id="container3d" tabindex="0"></div>
+    <canvas id="forceCanvas" style="display:none;width:100%;height:100%"></canvas>
     <div id="debug-view"></div>
     <div id="toggle-panel" onclick="togglePanel()">&#9664;</div>
     <div id="infopanel">
@@ -182,10 +184,10 @@ const API_BASE = window.location.origin;
 //   min_height         = 0.038
 // ═══════════════════════════════════════════════════════════════════════
 
-const V3_SIZE_RATIO = 0.25;    // largest topic = 25% of xyLim (was 36%, too bulky)
-const V3_MAX_HEIGHT = 0.28;    // tallest peak in v3
-const V3_MIN_HEIGHT = 0.035;   // shortest hill in v3
-const XYLIM = 0.55;            // hardcoded like v3
+const V3_SIZE_RATIO = 0.40;    // original: spreadN=1.66 makes footprints large (safe with MAX)
+const V3_MAX_HEIGHT = 0.28;    // tallest peak
+const V3_MIN_HEIGHT = 0.035;   // shortest hill
+const XYLIM = 0.4;             // original: xylim=0.4
 
 // ═══════════════════════════════════════════════════════════════════════
 // INPUT HANDLING
@@ -278,7 +280,7 @@ function processResults(data) {
   const maxRawSize = Math.max(...raw.map(t => t.size), 0.001);
   const minRawSize = Math.min(...raw.map(t => t.size), 0.001);
   const targetMaxSize = XYLIM * V3_SIZE_RATIO;   // 0.198
-  const targetMinSize = XYLIM * 0.05;             // 0.028
+  const targetMinSize = XYLIM * 0.06;             // smaller base
 
   // ── Step 3: Normalize heights to v3 range (0.035 to 0.28) ────────
   // API returns 0-1 normalized. V3 used raw 0.038-0.28.
@@ -380,10 +382,10 @@ function organicRadiusNoise(angle, seed) {
 function generateTerrain(gridN, xyLim) {
   const grid = new Float32Array(gridN * gridN);
 
-  const TAIL_FACTOR = 0.7;
-  const TAIL_BASE_HEIGHT = 0.15;
+  const TAIL_FACTOR = 0.5;       // reduced tail (MAX doesn't need connection)
+  const TAIL_BASE_HEIGHT = 0.10;
   const NOISE_STRENGTH = 0.12;
-  const HEIGHT_CAP = 0.45;
+  const HEIGHT_CAP = 0.9;        // relaxed — MAX doesn't blow up like SUM
 
   for (let gi = 0; gi < gridN; gi++) {
     for (let gj = 0; gj < gridN; gj++) {
@@ -421,7 +423,9 @@ function generateTerrain(gridN, xyLim) {
           }
         }
 
-        totalHeight += contribution;
+        // MAX accumulation (matches original graph.py)
+        // Each cell shows only the tallest topic contribution
+        if (contribution > totalHeight) totalHeight = contribution;
       }
 
       if (totalHeight > HEIGHT_CAP) totalHeight = HEIGHT_CAP;
@@ -562,7 +566,7 @@ function showInfo(t) {
 function closeInfo() { document.getElementById('infopanel').style.display = 'none'; selectedIdx = -1; if (currentMode === '2d') draw2D(); }
 
 // ═══════════════════════════════════════════════════════════════════════
-// 3D — same parameters as v3 (gridN=300, xyLim=0.55, heightScale=22)
+// 3D — matching original params (gridN=200, xyLim=0.4, heightScale=22)
 // ═══════════════════════════════════════════════════════════════════════
 function init3D() {
   const c = document.getElementById('container3d'), W = c.clientWidth, H = c.clientHeight;
@@ -575,7 +579,7 @@ function init3D() {
   const fill = new THREE.DirectionalLight(0x88aacc, 0.3); fill.position.set(-5, 8, -8); scene.add(fill);
 
   // EXACT v3 parameters
-  const gridN = 300;
+  const gridN = 200;
   const xyLim = XYLIM;   // 0.55 — hardcoded like v3
   const heightScale = 22; // same as v3
 
@@ -670,20 +674,200 @@ function tickFly(cam) { if (currentMode !== 'fly') return; const s=.14, d=new TH
 // ═══════════════════════════════════════════════════════════════════════
 // MODE SWITCHING
 // ═══════════════════════════════════════════════════════════════════════
-const hints = { '2d': 'Hover & click topics', '3d': 'Drag to orbit · Scroll to zoom', 'fly': 'WASD move · Mouse look · Q/E altitude', 'debug': 'Pipeline debug data' };
+const hints = { '2d': 'Hover & click topics', '3d': 'Drag to orbit · Scroll to zoom', 'fly': 'WASD move · Mouse look · Q/E altitude', 'force': 'Drag nodes · Cluster-based layout', 'debug': 'Pipeline debug data' };
 function switchMode(mode) {
   currentMode = mode;
   document.getElementById('hint').textContent = hints[mode]; closeInfo();
-  document.querySelectorAll('#mode-switcher button').forEach((b,i) => b.classList.toggle('active', ['2d','3d','fly','debug'][i]===mode));
+  document.querySelectorAll('#mode-switcher button').forEach((b,i) => b.classList.toggle('active', ['2d','3d','fly','force','debug'][i]===mode));
   renderCurrent();
 }
+// ═══════════════════════════════════════════════════════════════════════
+// FORCE-DIRECTED GRAPH (uses cluster data from API)
+// ═══════════════════════════════════════════════════════════════════════
+const CLUSTER_COLORS = ['#4ECDC4','#FF6B6B','#45B7D1','#FFA07A','#98D8C8','#F7DC6F','#BB8FCE','#85C1E9','#F0B27A','#AED6F1'];
+let forceNodes = [];
+let forceRunning = false;
+
+function initForceGraph() {
+  const fc = document.getElementById('forceCanvas');
+  const par = fc.parentElement;
+  fc.width = par.clientWidth * devicePixelRatio;
+  fc.height = par.clientHeight * devicePixelRatio;
+  fc.style.width = par.clientWidth + 'px';
+  fc.style.height = par.clientHeight + 'px';
+  const fctx = fc.getContext('2d');
+  fctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  const W = par.clientWidth, H = par.clientHeight;
+  const cx = W/2, cy = H/2;
+
+  // Create nodes from TOPICS (islands) + shore_markers
+  forceNodes = [];
+  const allEntities = [];
+  TOPICS.forEach(t => {
+    allEntities.push({ label: t.label, cluster: t.cluster, size: t.size, height: t.height, tag: t.tag, isMain: true });
+    (t.shore_markers || []).forEach(sm => {
+      allEntities.push({ label: sm.label, cluster: t.cluster, size: sm.size * 0.5, height: 0.1, tag: sm.tag || t.tag, isMain: false });
+    });
+  });
+
+  // Group by cluster for link generation
+  const clusters = {};
+  allEntities.forEach((e, i) => {
+    if (!clusters[e.cluster]) clusters[e.cluster] = [];
+    clusters[e.cluster].push(i);
+  });
+
+  // Generate links (within same cluster)
+  const links = [];
+  Object.values(clusters).forEach(members => {
+    for (let i = 0; i < members.length; i++) {
+      for (let j = i + 1; j < members.length; j++) {
+        links.push({ source: members[i], target: members[j], strength: 0.02 });
+      }
+    }
+  });
+
+  // Init positions in cluster groups
+  const clusterCenters = {};
+  let ci = 0;
+  Object.keys(clusters).forEach(k => {
+    const angle = (ci / Object.keys(clusters).length) * Math.PI * 2;
+    clusterCenters[k] = { x: cx + Math.cos(angle) * W * 0.25, y: cy + Math.sin(angle) * H * 0.25 };
+    ci++;
+  });
+
+  forceNodes = allEntities.map((e, i) => {
+    const cc = clusterCenters[e.cluster] || { x: cx, y: cy };
+    const maxSize = Math.max(...allEntities.map(a => a.size), 0.01);
+    const r = Math.max(8, Math.sqrt(e.size / maxSize) * 35);
+    return {
+      x: cc.x + (Math.random() - 0.5) * 80,
+      y: cc.y + (Math.random() - 0.5) * 80,
+      vx: 0, vy: 0,
+      r: r,
+      label: e.label,
+      cluster: e.cluster,
+      tag: e.tag,
+      isMain: e.isMain,
+      color: CLUSTER_COLORS[(e.cluster - 1) % CLUSTER_COLORS.length],
+    };
+  });
+
+  // Force simulation
+  forceRunning = true;
+  let iteration = 0;
+
+  function tick() {
+    if (!forceRunning || currentMode !== 'force') return;
+    iteration++;
+
+    // Repulsion between all nodes
+    for (let i = 0; i < forceNodes.length; i++) {
+      for (let j = i + 1; j < forceNodes.length; j++) {
+        const dx = forceNodes[j].x - forceNodes[i].x;
+        const dy = forceNodes[j].y - forceNodes[i].y;
+        const d = Math.max(Math.sqrt(dx*dx + dy*dy), 1);
+        const minD = forceNodes[i].r + forceNodes[j].r + 5;
+        if (d < minD * 3) {
+          const f = 200 / (d * d);
+          forceNodes[i].vx -= (dx / d) * f;
+          forceNodes[i].vy -= (dy / d) * f;
+          forceNodes[j].vx += (dx / d) * f;
+          forceNodes[j].vy += (dy / d) * f;
+        }
+      }
+    }
+
+    // Attraction along links
+    links.forEach(link => {
+      const a = forceNodes[link.source], b = forceNodes[link.target];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.sqrt(dx*dx + dy*dy);
+      const f = (d - 80) * link.strength;
+      a.vx += (dx / d) * f;
+      a.vy += (dy / d) * f;
+      b.vx -= (dx / d) * f;
+      b.vy -= (dy / d) * f;
+    });
+
+    // Center gravity
+    forceNodes.forEach(n => {
+      n.vx += (cx - n.x) * 0.001;
+      n.vy += (cy - n.y) * 0.001;
+      n.vx *= 0.85;
+      n.vy *= 0.85;
+      n.x += n.vx;
+      n.y += n.vy;
+      // Bounds
+      n.x = Math.max(n.r + 10, Math.min(W - n.r - 10, n.x));
+      n.y = Math.max(n.r + 10, Math.min(H - n.r - 10, n.y));
+    });
+
+    // Draw
+    fctx.fillStyle = '#0f1520';
+    fctx.fillRect(0, 0, W, H);
+
+    // Links
+    fctx.strokeStyle = 'rgba(100,120,150,0.12)';
+    fctx.lineWidth = 0.5;
+    links.forEach(link => {
+      const a = forceNodes[link.source], b = forceNodes[link.target];
+      fctx.beginPath(); fctx.moveTo(a.x, a.y); fctx.lineTo(b.x, b.y); fctx.stroke();
+    });
+
+    // Nodes
+    forceNodes.forEach(n => {
+      // Glow
+      const grd = fctx.createRadialGradient(n.x, n.y, n.r * 0.5, n.x, n.y, n.r * 2);
+      grd.addColorStop(0, n.color + '30');
+      grd.addColorStop(1, 'rgba(0,0,0,0)');
+      fctx.fillStyle = grd;
+      fctx.beginPath(); fctx.arc(n.x, n.y, n.r * 2, 0, Math.PI * 2); fctx.fill();
+
+      // Circle
+      fctx.beginPath(); fctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+      fctx.fillStyle = n.color + (n.isMain ? 'cc' : '66');
+      fctx.fill();
+      fctx.strokeStyle = n.color;
+      fctx.lineWidth = n.isMain ? 2 : 1;
+      fctx.stroke();
+
+      // Label
+      const fs = n.isMain ? Math.max(9, Math.min(13, n.r * 0.4)) : 8;
+      fctx.font = `${n.isMain ? 'bold ' : ''}${fs}px 'DM Sans',sans-serif`;
+      fctx.fillStyle = '#e0dce8';
+      fctx.textAlign = 'center';
+      fctx.textBaseline = 'bottom';
+      fctx.fillText(n.label, n.x, n.y - n.r - 3);
+    });
+
+    // Cluster labels
+    const drawn = {};
+    forceNodes.forEach(n => {
+      if (!drawn[n.cluster]) {
+        drawn[n.cluster] = true;
+        fctx.font = 'bold 10px DM Sans';
+        fctx.fillStyle = n.color + '88';
+        fctx.textAlign = 'center';
+        fctx.fillText('Cluster ' + n.cluster, n.x, n.y + n.r + 14);
+      }
+    });
+
+    if (iteration < 300) requestAnimationFrame(tick);
+  }
+  tick();
+}
+
 function renderCurrent() {
   if (!TOPICS.length) return;
   const dv = document.getElementById('debug-view');
-  canvas2d.style.display = 'none'; document.getElementById('container3d').style.display = 'none'; dv.classList.remove('active');
+  const fc = document.getElementById('forceCanvas');
+  canvas2d.style.display = 'none'; document.getElementById('container3d').style.display = 'none'; dv.classList.remove('active'); fc.style.display = 'none';
+  forceRunning = false;
   if (animFrame) cancelAnimationFrame(animFrame);
 
   if (currentMode === 'debug') { dv.classList.add('active'); renderDebugTable(); return; }
+  if (currentMode === 'force') { fc.style.display = 'block'; initForceGraph(); return; }
   if (currentMode === '2d') {
     canvas2d.style.display = 'block'; resize2D(); draw2D(); return;
   }
