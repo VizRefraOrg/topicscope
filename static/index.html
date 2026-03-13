@@ -126,7 +126,6 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
   <div id="viz">
     <div id="empty-state"><div class="empty-icon">&#9968;</div><div class="empty-title">No analysis yet</div><div class="empty-sub">Paste text or upload a document to generate visualizations</div></div>
     <div id="scatter2d"></div>
-    <div id="plotly3d" style="display:none;width:100%;height:100%"></div>
     <div id="container3d" tabindex="0"></div>
     <div id="forceGraph"></div>
     <div id="debug-view"></div>
@@ -140,9 +139,7 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/4.13.0/d3.min.js"></script>
 <!-- Lodash (for force-directed groupBy) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"></script>
-<!-- Plotly.js (for 3D surface — matches original graph.py) -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.0/plotly.min.js"></script>
-<!-- Three.js (for fly-through only) -->
+<!-- Three.js (for 3D terrain) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
 <!-- Fisheye plugin (from original) -->
@@ -478,89 +475,8 @@ function renderForceGraph() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// 3D SURFACE — PLOTLY (exact port of original graph.py create_3d_graph)
-// ═══════════════════════════════════════════════════════════════════════
-function renderPlotly3D() {
-  const container = document.getElementById('plotly3d');
-  container.innerHTML = '';
-  if (!TOPICS.length) return;
-
-  // Original params: xylim=0.4, gridN=200, spreadN=1.66
-  const dataXYLim = Math.max(...TOPICS.map(t=>Math.abs(t.x)),...TOPICS.map(t=>Math.abs(t.y)),0.3) * 1.2;
-  const gridN = 200;
-  const spreadN = 1.66;
-
-  // Build grid — EXACT original algorithm from graph.py
-  const grid = [];
-  for (let i = 0; i < gridN; i++) {
-    grid[i] = new Float64Array(gridN);
-  }
-
-  const annotations = [];
-
-  for (let ti = 0; ti < TOPICS.length; ti++) {
-    const t = TOPICS[ti];
-    // Map topic x,y to grid indices
-    const gx = Math.floor((t.x + dataXYLim) / (2 * dataXYLim) * gridN);
-    const gy = Math.floor((t.y + dataXYLim) / (2 * dataXYLim) * gridN);
-    // Radius on grid: size / (2*xylim) * gridN * spreadN
-    const gr = Math.max(3, Math.floor(t.size / (2 * dataXYLim) * gridN * spreadN));
-
-    // Annotation at peak (original: x=gy, y=gx, z=height)
-    annotations.push({
-      showarrow: false,
-      x: gy, y: gx, z: t.height + 0.01,
-      text: t.label,
-      font: { size: t.height > 0.15 ? 13 : 10, color: '#222' },
-      xanchor: 'auto', yanchor: 'auto',
-    });
-
-    // Fill grid with paraboloid: val = (1 - dist²/radius²) * height
-    const xStart = Math.max(0, gx - gr);
-    const xEnd = Math.min(gridN, gx + gr);
-    const yStart = Math.max(0, gy - gr);
-    const yEnd = Math.min(gridN, gy + gr);
-
-    for (let i1 = xStart; i1 < xEnd; i1++) {
-      for (let j1 = yStart; j1 < yEnd; j1++) {
-        const dist = Math.sqrt((i1 - gx) * (i1 - gx) + (j1 - gy) * (j1 - gy));
-        if (dist < gr) {
-          const val = (1 - dist * dist / (gr * gr)) * t.height;
-          if (val > grid[i1][j1]) {
-            grid[i1][j1] = val;  // MAX accumulation
-          }
-        }
-      }
-    }
-  }
-
-  // Create Plotly surface — matches original exactly
-  const rect = container.getBoundingClientRect();
-  Plotly.newPlot(container, [{
-    type: 'surface',
-    z: grid,
-    colorscale: 'YlGnBu',
-    showscale: false,
-    contours: {
-      z: { show: false }
-    }
-  }], {
-    scene: {
-      xaxis: { backgroundcolor: 'rgb(200,200,230)', gridcolor: 'white', showbackground: true, zerolinecolor: 'white', showticklabels: false, title: '' },
-      yaxis: { backgroundcolor: 'rgb(230,200,230)', gridcolor: 'white', showbackground: true, zerolinecolor: 'white', showticklabels: false, title: '' },
-      zaxis: { backgroundcolor: 'rgb(230,230,200)', gridcolor: 'white', showbackground: true, zerolinecolor: 'white', showticklabels: false, title: '' },
-      annotations: annotations,
-      camera: { up: {x:0,y:0,z:1}, center: {x:0,y:0,z:0} },
-    },
-    height: rect.height,
-    width: rect.width,
-    showlegend: false,
-    margin: { l: 10, r: 10, t: 30, b: 50 },
-  }, { responsive: true });
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// THREE.JS FLY-THROUGH (paraboloid profile, no organic noise)
+// 3D TERRAIN — Three.js with paraboloid profile (1-r²) from graph.py
+// No organic noise, no half-ellipse, clean mathematical surface
 // ═══════════════════════════════════════════════════════════════════════
 function heightToColor(h) {
   const t = h / maxH;
@@ -573,74 +489,94 @@ function heightToColor(h) {
   return {r:.12,g:.18,b:.28};
 }
 
-function initFlyThrough() {
+function init3D() {
   const c = document.getElementById('container3d'), W = c.clientWidth, H = c.clientHeight;
   const scene = new THREE.Scene(); scene.background = new THREE.Color(0x8aaabe); scene.fog = new THREE.FogExp2(0x8aaabe, 0.025);
-  const camera = new THREE.PerspectiveCamera(50, W/H, 0.1, 1000);
-  camera.position.set(-12, 6, 18); camera.rotation.order = 'YXZ'; camera.lookAt(0, 3, 0);
-  const renderer = new THREE.WebGLRenderer({antialias: true}); renderer.setSize(W, H); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); c.appendChild(renderer.domElement);
+  const camera = new THREE.PerspectiveCamera(50, W/H, 0.1, 1000); camera.position.set(0, 12, 22); camera.lookAt(0,0,0);
+  const renderer = new THREE.WebGLRenderer({antialias:true}); renderer.setSize(W,H); renderer.setPixelRatio(Math.min(devicePixelRatio,2)); c.appendChild(renderer.domElement);
   scene.add(new THREE.AmbientLight(0x99aabb, 0.6));
-  const sun = new THREE.DirectionalLight(0xfff4e0, 1); sun.position.set(8, 15, 5); scene.add(sun);
+  const sun = new THREE.DirectionalLight(0xfff4e0, 1); sun.position.set(8,15,5); scene.add(sun);
+  const fill = new THREE.DirectionalLight(0x88aacc, 0.3); fill.position.set(-5,8,-8); scene.add(fill);
 
-  // Build terrain with PARABOLOID profile (matching Plotly surface)
+  // Compute xyLim from data, matching original graph.py defaults
   const dataXYLim = Math.max(...TOPICS.map(t=>Math.abs(t.x)),...TOPICS.map(t=>Math.abs(t.y)),0.3) * 1.2;
-  const gridN = 200, heightScale = 22, spreadN = 1.66;
+  const gridN = 200, spreadN = 1.66, heightScale = 22;
 
+  // Build grid with PARABOLOID profile: val = (1 - dist²/radius²) * height
+  // MAX accumulation — matches original graph.py exactly
   const grid = new Float32Array(gridN * gridN);
-  for (let ti = 0; ti < TOPICS.length; ti++) {
-    const t = TOPICS[ti];
+  for (const t of TOPICS) {
     const gx = (t.x + dataXYLim) / (2 * dataXYLim) * gridN;
     const gy = (t.y + dataXYLim) / (2 * dataXYLim) * gridN;
     const gr = Math.max(3, t.size / (2 * dataXYLim) * gridN * spreadN);
-    for (let i1 = Math.max(0, Math.floor(gx-gr)); i1 < Math.min(gridN, Math.ceil(gx+gr)); i1++) {
-      for (let j1 = Math.max(0, Math.floor(gy-gr)); j1 < Math.min(gridN, Math.ceil(gy+gr)); j1++) {
-        const dist = Math.sqrt((i1-gx)*(i1-gx)+(j1-gy)*(j1-gy));
+    const xS = Math.max(0, Math.floor(gx - gr)), xE = Math.min(gridN, Math.ceil(gx + gr));
+    const yS = Math.max(0, Math.floor(gy - gr)), yE = Math.min(gridN, Math.ceil(gy + gr));
+    for (let i = xS; i < xE; i++) {
+      for (let j = yS; j < yE; j++) {
+        const dist = Math.sqrt((i-gx)*(i-gx) + (j-gy)*(j-gy));
         if (dist < gr) {
-          const val = (1 - dist*dist/(gr*gr)) * t.height;
-          if (val > grid[i1*gridN+j1]) grid[i1*gridN+j1] = val;
+          const val = (1 - dist*dist/(gr*gr)) * t.height;  // PARABOLOID
+          const idx = i * gridN + j;
+          if (val > grid[idx]) grid[idx] = val;  // MAX
         }
       }
     }
   }
 
+  // Build mesh
   const geo = new THREE.PlaneGeometry(28, 28, gridN-1, gridN-1); geo.rotateX(-Math.PI/2);
-  const verts = geo.attributes.position, colors = new Float32Array(verts.count*3);
+  const verts = geo.attributes.position, colors = new Float32Array(verts.count * 3);
   for (let i = 0; i < verts.count; i++) {
-    const ix = i%gridN, iy = Math.floor(i/gridN);
-    const h = grid[iy*gridN+ix];
+    const ix = i % gridN, iy = Math.floor(i / gridN);
+    const h = grid[iy * gridN + ix];
     verts.setY(i, h * heightScale);
     const co = heightToColor(h); colors[i*3]=co.r; colors[i*3+1]=co.g; colors[i*3+2]=co.b;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3)); geo.computeVertexNormals();
   scene.add(new THREE.Mesh(geo, new THREE.MeshPhongMaterial({vertexColors:true, shininess:15, specular:0x222222, side:THREE.DoubleSide, flatShading:false})));
+
   // Ocean
-  const seaGeo = new THREE.PlaneGeometry(80,80); seaGeo.rotateX(-Math.PI/2);
+  const seaGeo = new THREE.PlaneGeometry(80, 80); seaGeo.rotateX(-Math.PI/2);
   scene.add(new THREE.Mesh(seaGeo, new THREE.MeshPhongMaterial({color:0x3a5a7a, shininess:60, transparent:true, opacity:0.85})));
+
   // Labels
   for (const t of TOPICS) {
     if (t.height < 0.04) continue;
-    const cv=document.createElement('canvas'),cx=cv.getContext('2d');cv.width=512;cv.height=72;cx.clearRect(0,0,512,72);
-    const fs=t.height>0.2?26:t.height>0.1?21:16;
-    cx.font=`bold ${fs}px 'DM Sans',sans-serif`;
-    const tm=cx.measureText(t.label),bw=Math.min(500,tm.width+20),bx=256-bw/2;
-    cx.fillStyle='rgba(255,255,245,0.75)';cx.beginPath();cx.roundRect(bx,10,bw,fs+14,6);cx.fill();
-    cx.fillStyle='#2a2a20';cx.textAlign='center';cx.textBaseline='middle';cx.fillText(t.label,256,10+(fs+14)/2);
-    const tex=new THREE.CanvasTexture(cv);
-    const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false}));
-    const sx=((t.x+dataXYLim)/(2*dataXYLim)-0.5)*28, sz=-((t.y+dataXYLim)/(2*dataXYLim)-0.5)*28;
-    sp.position.set(sx,t.height*heightScale+2,sz);sp.scale.set(7,1,1);scene.add(sp);
+    const cv = document.createElement('canvas'), cx = cv.getContext('2d'); cv.width=512; cv.height=72; cx.clearRect(0,0,512,72);
+    const fs = t.height>0.2?26:t.height>0.1?21:16;
+    cx.font = `bold ${fs}px 'DM Sans',sans-serif`;
+    const tm = cx.measureText(t.label), bw = Math.min(500, tm.width+20), bx = 256-bw/2;
+    cx.fillStyle = 'rgba(255,255,245,0.75)'; cx.beginPath(); cx.roundRect(bx,10,bw,fs+14,6); cx.fill();
+    cx.fillStyle = '#2a2a20'; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(t.label, 256, 10+(fs+14)/2);
+    const tex = new THREE.CanvasTexture(cv);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true, depthTest:false}));
+    const sx = ((t.x+dataXYLim)/(2*dataXYLim) - 0.5) * 28;
+    const sz = -((t.y+dataXYLim)/(2*dataXYLim) - 0.5) * 28;
+    sp.position.set(sx, t.height*heightScale+2, sz); sp.scale.set(7,1,1); scene.add(sp);
   }
   return {scene, camera, renderer};
 }
 
-const flyK={},flyM={drag:false,x:0,y:0};
-function attachFly(cam,el){
-  window.addEventListener('keydown',e=>{flyK[e.key.toLowerCase()]=true});window.addEventListener('keyup',e=>{flyK[e.key.toLowerCase()]=false});
-  el.addEventListener('mousedown',e=>{flyM.drag=true;flyM.x=e.clientX;flyM.y=e.clientY});
-  el.addEventListener('mouseup',()=>flyM.drag=false);el.addEventListener('mouseleave',()=>flyM.drag=false);
-  el.addEventListener('mousemove',e=>{if(!flyM.drag||currentMode!=='fly')return;cam.rotation.order='YXZ';cam.rotation.y-=(e.clientX-flyM.x)*.003;cam.rotation.x=Math.max(-Math.PI/3,Math.min(Math.PI/3,cam.rotation.x-(e.clientY-flyM.y)*.003));flyM.x=e.clientX;flyM.y=e.clientY});
+// ═══════════════════════════════════════════════════════════════════════
+// 3D CONTROLS — orbit + fly
+// ═══════════════════════════════════════════════════════════════════════
+let orbit = {drag:false, lx:0, ly:0, theta:.3, phi:.9, dist:22};
+function updateOrbit(cam) { cam.position.x=orbit.dist*Math.sin(orbit.phi)*Math.sin(orbit.theta); cam.position.y=orbit.dist*Math.cos(orbit.phi); cam.position.z=orbit.dist*Math.sin(orbit.phi)*Math.cos(orbit.theta); cam.lookAt(0,0,0); }
+function attachOrbit(cam, el) {
+  updateOrbit(cam);
+  el.addEventListener('mousedown', e=>{orbit.drag=true;orbit.lx=e.clientX;orbit.ly=e.clientY});
+  el.addEventListener('mouseup', ()=>orbit.drag=false); el.addEventListener('mouseleave', ()=>orbit.drag=false);
+  el.addEventListener('mousemove', e=>{if(!orbit.drag||currentMode!=='3d')return;orbit.theta+=(e.clientX-orbit.lx)*.005;orbit.phi=Math.max(.1,Math.min(Math.PI*.48,orbit.phi-(e.clientY-orbit.ly)*.005));orbit.lx=e.clientX;orbit.ly=e.clientY;updateOrbit(cam)});
+  el.addEventListener('wheel', e=>{if(currentMode!=='3d')return;orbit.dist=Math.max(5,Math.min(50,orbit.dist+e.deltaY*.015));updateOrbit(cam);e.preventDefault()}, {passive:false});
 }
-function tickFly(cam){if(currentMode!=='fly')return;const s=.14,d=new THREE.Vector3;cam.getWorldDirection(d);const r=new THREE.Vector3().crossVectors(d,cam.up).normalize();if(flyK.w||flyK.arrowup)cam.position.addScaledVector(d,s);if(flyK.s||flyK.arrowdown)cam.position.addScaledVector(d,-s);if(flyK.a||flyK.arrowleft)cam.position.addScaledVector(r,-s);if(flyK.d||flyK.arrowright)cam.position.addScaledVector(r,s);if(flyK.q)cam.position.y+=s*.6;if(flyK.e)cam.position.y-=s*.6}
+const flyK={}, flyM={drag:false,x:0,y:0};
+function attachFly(cam, el) {
+  window.addEventListener('keydown', e=>{flyK[e.key.toLowerCase()]=true}); window.addEventListener('keyup', e=>{flyK[e.key.toLowerCase()]=false});
+  el.addEventListener('mousedown', e=>{flyM.drag=true;flyM.x=e.clientX;flyM.y=e.clientY});
+  el.addEventListener('mouseup', ()=>flyM.drag=false); el.addEventListener('mouseleave', ()=>flyM.drag=false);
+  el.addEventListener('mousemove', e=>{if(!flyM.drag||currentMode!=='fly')return;cam.rotation.order='YXZ';cam.rotation.y-=(e.clientX-flyM.x)*.003;cam.rotation.x=Math.max(-Math.PI/3,Math.min(Math.PI/3,cam.rotation.x-(e.clientY-flyM.y)*.003));flyM.x=e.clientX;flyM.y=e.clientY});
+}
+function tickFly(cam) { if(currentMode!=='fly')return;const s=.14,d=new THREE.Vector3;cam.getWorldDirection(d);const r=new THREE.Vector3().crossVectors(d,cam.up).normalize();if(flyK.w||flyK.arrowup)cam.position.addScaledVector(d,s);if(flyK.s||flyK.arrowdown)cam.position.addScaledVector(d,-s);if(flyK.a||flyK.arrowleft)cam.position.addScaledVector(r,-s);if(flyK.d||flyK.arrowright)cam.position.addScaledVector(r,s);if(flyK.q)cam.position.y+=s*.6;if(flyK.e)cam.position.y-=s*.6; }
 
 // ═══════════════════════════════════════════════════════════════════════
 // DEBUG TABLE
@@ -664,7 +600,7 @@ function renderDebugTable(){
 // ═══════════════════════════════════════════════════════════════════════
 // MODE SWITCHING
 // ═══════════════════════════════════════════════════════════════════════
-const hints={'2d':'Hover over entities · Scroll to zoom','3d':'Drag to rotate · Scroll to zoom (Plotly)','fly':'WASD move · Mouse look · Q/E altitude','force':'Drag nodes · Fisheye on hover','debug':'Pipeline debug data'};
+const hints={'2d':'Hover over entities · Scroll to zoom','3d':'Drag to orbit · Scroll to zoom','fly':'WASD move · Mouse look · Q/E altitude','force':'Drag nodes · Fisheye on hover','debug':'Pipeline debug data'};
 function switchMode(mode){
   currentMode=mode;
   document.getElementById('hint').textContent=hints[mode]||'';
@@ -674,7 +610,7 @@ function switchMode(mode){
 
 function renderCurrent(){
   if(!TOPICS.length&&!RAW_ENTITIES.length)return;
-  const views=['scatter2d','plotly3d','container3d','forceGraph'];
+  const views=['scatter2d','container3d','forceGraph'];
   views.forEach(id=>{document.getElementById(id).style.display='none'});
   document.getElementById('debug-view').classList.remove('active');
   if(animFrame)cancelAnimationFrame(animFrame);
@@ -682,11 +618,13 @@ function renderCurrent(){
   if(currentMode==='debug'){document.getElementById('debug-view').classList.add('active');renderDebugTable();return}
   if(currentMode==='2d'){document.getElementById('scatter2d').style.display='block';render2DScatter();return}
   if(currentMode==='force'){document.getElementById('forceGraph').style.display='block';renderForceGraph();return}
-  if(currentMode==='3d'){document.getElementById('plotly3d').style.display='block';renderPlotly3D();return}
 
-  // Fly-through (Three.js)
+  // 3D or fly — both use Three.js terrain
   const c3=document.getElementById('container3d');c3.style.display='block';c3.innerHTML='';
-  const{scene,camera,renderer}=initFlyThrough();attachFly(camera,renderer.domElement);c3.focus();
+  const{scene,camera,renderer}=init3D(); attachOrbit(camera,renderer.domElement); attachFly(camera,renderer.domElement);
+  if(currentMode==='3d'){orbit={drag:false,lx:0,ly:0,theta:.3,phi:.9,dist:22};updateOrbit(camera)}
+  else{camera.position.set(-12,6,18);camera.rotation.order='YXZ';camera.lookAt(0,3,0)}
+  c3.focus();
   function anim(){animFrame=requestAnimationFrame(anim);tickFly(camera);renderer.render(scene,camera)}anim();
   window.onresize=()=>{camera.aspect=c3.clientWidth/c3.clientHeight;camera.updateProjectionMatrix();renderer.setSize(c3.clientWidth,c3.clientHeight)};
 }
