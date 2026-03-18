@@ -37,6 +37,8 @@ class TopicResult(BaseModel):
     source: str = ""
     similarity: float = 0.0
     shore_markers: list = []
+    grid_gx: int = -1
+    grid_gy: int = -1
 
 
 class EntityResult(BaseModel):
@@ -51,6 +53,7 @@ class AnalyseResponse(BaseModel):
     metadata: dict
     debug: list = []
     distance_matrix: list = []
+    heightmap: dict = {}
 
 
 @app.get("/api/health")
@@ -97,6 +100,7 @@ async def run_analysis(text: str) -> AnalyseResponse:
         candidates = result["candidates"]
         debug_data = result.get("debug", [])
         dist_matrix = result.get("distance_matrix", [])
+        heightmap_data = result.get("heightmap", {})
 
         from backend.pipeline.clustering import process_topics
         final_topics = process_topics(candidates)
@@ -114,6 +118,8 @@ async def run_analysis(text: str) -> AnalyseResponse:
                 source=t.get("source", ""),
                 similarity=t.get("similarity", 0.0),
                 shore_markers=t.get("shore_markers", []),
+                grid_gx=t.get("grid_gx", -1),
+                grid_gy=t.get("grid_gy", -1),
             )
             for t in final_topics
         ]
@@ -131,6 +137,7 @@ async def run_analysis(text: str) -> AnalyseResponse:
                 "topics_final": len(final_topics), "processing_time_ms": elapsed_ms,
             },
             debug=debug_data, distance_matrix=dist_matrix,
+            heightmap=heightmap_data,
         )
 
     except HTTPException:

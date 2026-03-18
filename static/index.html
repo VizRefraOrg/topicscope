@@ -69,15 +69,14 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
 .debug-table tr:hover td{background:rgba(100,80,200,0.06)}
 .debug-table .num{text-align:right}.high{color:#ff8844;font-weight:600}.mid{color:#cc44ff}.low{color:rgba(140,130,180,0.5)}
 /* D3 chart styles */
-#scatter2d svg{background:rgb(229,236,246)}
+#scatter2d svg{background:#F8F9FA}
 #scatter2d .axis line,#scatter2d .axis path{stroke:rgba(0,0,0,0.1)}
 #scatter2d .axis text{fill:#555;font-size:10px}
-.chart-tooltip{position:absolute;padding:6px 10px;border-radius:4px;font-size:12px;font-family:'DM Sans',sans-serif;pointer-events:none;z-index:100}
-#forceGraph svg{background:#0f1520}
-#forceGraph .links line{stroke:#666;stroke-opacity:0.3}
-#forceGraph .text{font-size:11px;fill:#ccc;font-family:'DM Sans',sans-serif}
+.chart-tooltip,#tooltip{position:absolute;padding:8px 12px;border-radius:6px;font-size:12px;font-family:'DM Sans',sans-serif;pointer-events:none;z-index:100;opacity:0;transition:opacity 0.15s}
+#forceGraph svg{background:#1a1f2e}
+#forceGraph .links line{stroke:#999;stroke-opacity:0.25}
+#forceGraph .text{font-size:10px;fill:#ddd;font-family:'DM Sans',sans-serif}
 #forceGraph .node{stroke:#fff;stroke-width:1.5}
-#tooltip{position:absolute;padding:6px 10px;border-radius:4px;font-size:12px;font-family:'DM Sans',sans-serif;pointer-events:none;z-index:100}
 </style>
 </head>
 <body>
@@ -137,6 +136,7 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
 
 <!-- D3 v4 (for d3.event, schemeCategory20) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/4.13.0/d3.min.js"></script>
+<script src="https://d3js.org/d3-contour.v1.min.js"></script>
 <!-- Lodash (for force-directed groupBy) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"></script>
 <!-- Three.js (for 3D terrain) -->
@@ -153,6 +153,7 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
 // ═══════════════════════════════════════════════════════════════════════
 let TOPICS = [];          // normalized for terrain
 let RAW_ENTITIES = [];    // API entities in D3-compatible format {entity,x,y,size,tag,cluster,salience}
+let HEIGHTMAP = null;
 let currentMode = '2d';
 let animFrame = null;
 let maxH = 0.28;
@@ -231,9 +232,14 @@ function processResults(data) {
       wikipedia_url: t.wikipedia_url || '', source: t.source || '', similarity: t.similarity || 0,
       seed: Math.abs(Math.sin(t.x*127.1+t.y*311.7)*43758.5453) % 1000,
       tag: t.tag||'MISC', cluster: t.cluster||1,
+      // Grid position embedded per-topic (survives sorting in backend)
+      gridPos: (t.grid_gx >= 0 && t.grid_gy >= 0) ? {gx: t.grid_gx, gy: t.grid_gy} : null,
     };
   });
   maxH = Math.max(...TOPICS.map(t=>t.height));
+
+  // Store server-computed heightmap
+  HEIGHTMAP = data.heightmap || null;
 
   // Metadata
   document.getElementById('m-words').textContent=data.metadata.word_count;
@@ -258,48 +264,42 @@ function render2DScatter() {
   const data = RAW_ENTITIES;
   if (!data.length) return;
 
-  let alreadyExists = [];
-  let distinctTags = [];
-  data.forEach(item => {
-    if (!alreadyExists.includes(item.tag)) {
-      alreadyExists.push(item.tag);
-      distinctTags.push({tag: item.tag, entity: item.entity});
-    }
-  });
-
-  const colors = ["#f0f921","#e3685f","#a92495","#ff0000","#5802a3","#00bcd4","#4caf50","#ff9800"];
-  const margin = {top:10, right:20, bottom:30, left:45};
+  const margin = {top: 10, right: 160, bottom: 30, left: 45};
   const rect = container.getBoundingClientRect();
   const width = rect.width - margin.left - margin.right;
   const height = rect.height - margin.top - margin.bottom;
 
-  const yAxisRange = data.map(d => d.y);
-  const xAxisRange = data.map(d => d.x);
-  const sizeRange = data.map(d => d.size);
-  const tagRange = data.map(d => d.tag);
-  const colorScaleRegion = [...new Set(tagRange)];
+  // Scales
+  const xExtent = d3.extent(data, d => d.x);
+  const yExtent = d3.extent(data, d => d.y);
+  const xPad = (xExtent[1] - xExtent[0]) * 0.15 || 1;
+  const yPad = (yExtent[1] - yExtent[0]) * 0.15 || 1;
 
-  const maxSizeRange = d3.max(sizeRange);
-  const yMin = d3.min(yAxisRange), yMax = d3.max(yAxisRange);
-  const xMin = d3.min(xAxisRange), xMax = d3.max(xAxisRange);
-  const circleRange = 40;
+  const xScale = d3.scaleLinear()
+      .domain([xExtent[0] - xPad, xExtent[1] + xPad])
+      .range([0, width]);
+  const yScale = d3.scaleLinear()
+      .domain([yExtent[0] - yPad, yExtent[1] + yPad])
+      .range([height, 0]);
 
-  const xScale = d3.scaleLinear().domain([xMin*1.2, xMax*1.4]).range([0, width]);
-  const yScale = d3.scaleLinear().domain([yMin*1.2, yMax*1.4]).range([height, 0]);
-  const radiusScale = d3.scaleSqrt().domain([0, maxSizeRange]).range([0, circleRange]);
-  const colorScale = d3.scaleOrdinal(d3.schemeCategory10).domain(colorScaleRegion).range(colors);
+  const maxSize = d3.max(data, d => d.size) || 1;
+  const radiusScale = d3.scaleSqrt().domain([0, maxSize]).range([4, 35]);
+
+  // Color by cluster
+  const clusterIds = [...new Set(data.map(d => d.cluster))].sort((a,b) => a - b);
+  const clusterPalette = ['#4E79A7','#F28E2B','#E15759','#76B7B2','#59A14F','#EDC948','#B07AA1','#FF9DA7'];
+  const colorScale = d3.scaleOrdinal().domain(clusterIds).range(clusterPalette);
 
   const xAxis = d3.axisBottom(xScale).tickFormat(x => x.toFixed(2)).tickSize(-height);
   const yAxis = d3.axisLeft(yScale).tickSize(-width);
 
-  const svgZoom = d3.zoom().scaleExtent([0.5, 3]).on("zoom", function() {
+  const svgZoom = d3.zoom().scaleExtent([0.5, 5]).on("zoom", function() {
     g.attr('transform', d3.event.transform);
   });
 
-  const legendWidth = 140;
   const svg = d3.select("#scatter2d")
     .append("svg")
-    .attr("width", width + margin.left + margin.right + legendWidth)
+    .attr("width", width + margin.left + margin.right)
     .attr("height", height + margin.top + margin.bottom);
 
   const g = svg.append("g")
@@ -309,63 +309,91 @@ function render2DScatter() {
     .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
 
   // Background
-  g.append("rect").style("fill", "rgb(229,236,246)").attr("width", width).attr("height", height);
+  g.append("rect").style("fill", "#F8F9FA").attr("width", width).attr("height", height);
 
   // Axes
-  g.append("g").attr("class","x axis").attr("transform","translate(0,"+height+")").call(xAxis);
+  g.append("g").attr("class","x axis").attr("transform","translate(0," + height + ")").call(xAxis);
   g.append("g").attr("class","y axis").call(yAxis);
+
+  // Contour density overlay
+  if (typeof d3.contourDensity === 'function' && data.length >= 5) {
+    var contourData = d3.contourDensity()
+        .x(function(d) { return xScale(d.x); })
+        .y(function(d) { return yScale(d.y); })
+        .weight(function(d) { return d.salience || 0.1; })
+        .size([width, height])
+        .bandwidth(30)
+        .thresholds(12)
+        (data);
+
+    var contourMax = d3.max(contourData, function(d) { return d.value; }) || 1;
+    g.append("g").attr("class", "contours")
+        .selectAll("path")
+        .data(contourData)
+        .enter().append("path")
+        .attr("d", d3.geoPath())
+        .attr("fill", function(d) {
+            var t = d.value / contourMax;
+            var r = Math.round(100 - t * 60);
+            var gv = Math.round(180 - t * 40);
+            var b = Math.round(100 - t * 60);
+            return 'rgb(' + r + ',' + gv + ',' + b + ')';
+        })
+        .attr("stroke", "#5A8A5A")
+        .attr("stroke-width", 0.5)
+        .attr("stroke-opacity", 0.3)
+        .attr("fill-opacity", 0.35);
+  }
 
   const tooltip = d3.select("#scatterTooltip");
 
+  // Sort data so large circles render behind small ones
+  data.sort(function(a, b) { return b.size - a.size; });
+
   const outerCircle = g.append("g").attr("class","dots").selectAll(".dot").data(data).enter().append('g');
 
-  // Circles (sorted so large behind small)
+  // Entity circles on top of contours
   outerCircle.append("circle")
     .attr("class","dot")
-    .style("fill", d => colorScale(d.tag))
-    .style("opacity", 0.8)
-    .attr("cx", d => xScale(d.x))
-    .attr("cy", d => yScale(d.y))
-    .attr("r", d => radiusScale(d.size))
+    .style("fill", function(d) { return colorScale(d.cluster); })
+    .style("fill-opacity", 0.75)
+    .attr("cx", function(d) { return xScale(d.x); })
+    .attr("cy", function(d) { return yScale(d.y); })
+    .attr("r", function(d) { return radiusScale(d.size); })
+    .style("stroke", function(d) { return d3.color(colorScale(d.cluster)).darker(0.7); })
+    .style("stroke-width", 1.5)
     .on("mousemove", function(d) {
-      tooltip.transition().duration(200).style('opacity',0.9);
-      tooltip.html(d.entity)
-        .style('left',(d3.event.pageX+15)+'px')
-        .style('top',(d3.event.pageY-10)+'px');
-      tooltip.style('background-color', colorScale(d.tag)).style('color','#000');
+      tooltip.transition().duration(200).style('opacity', 0.9);
+      tooltip.html('<strong>' + d.entity + '</strong><br>Cluster: ' + d.cluster + '<br>Salience: ' + (d.salience || 0).toFixed(3))
+        .style('left', (d3.event.pageX + 15) + 'px')
+        .style('top', (d3.event.pageY - 10) + 'px')
+        .style('background-color', '#fff')
+        .style('color', '#333')
+        .style('border', '1px solid ' + colorScale(d.cluster))
+        .style('padding', '8px 12px')
+        .style('border-radius', '6px')
+        .style('box-shadow', '0 2px 8px rgba(0,0,0,0.15)');
     })
-    .on("mouseout", () => tooltip.transition().duration(200).style('opacity',0))
-    .sort((a,b) => b.size - a.size);
+    .on("mouseout", function() { tooltip.transition().duration(200).style('opacity', 0); });
 
   // Labels above circles
   outerCircle.append('text')
-    .attr('x', d => xScale(d.x))
-    .attr('y', d => yScale(d.y) - radiusScale(d.size) - 6)
-    .style('font-size', '12px')
+    .attr('x', function(d) { return xScale(d.x); })
+    .attr('y', function(d) { return yScale(d.y) - radiusScale(d.size) - 5; })
+    .style('font-size', '11px')
     .attr('text-anchor', 'middle')
     .style('font-family', "'DM Sans',sans-serif")
     .style('fill', '#333')
-    .sort((a,b) => b.size - a.size)
-    .text(d => d.entity.length > 25 ? d.entity.substring(0,24)+'..' : d.entity);
+    .text(function(d) { return d.entity.length > 28 ? d.entity.substring(0, 27) + '..' : d.entity; });
 
-  // Legend
-  const legendSize = 14;
-  const legend = svg.append("g").attr("class","legends")
-    .attr("transform","translate("+(width+margin.left+20)+","+(margin.top+20)+")");
-
-  legend.selectAll("rect").data(distinctTags).enter().append("rect")
-    .attr("y",(d,i)=>i*(legendSize+5))
-    .attr("width",legendSize).attr("height",legendSize)
-    .style("fill",d=>colorScale(d.tag));
-
-  legend.selectAll("text").data(distinctTags).enter().append("text")
-    .attr("x",legendSize+5)
-    .attr("y",(d,i)=>i*(legendSize+5)+legendSize/2+2)
-    .style("fill",d=>colorScale(d.tag))
-    .text(d=>d.tag)
-    .style('font-size','11px')
-    .style('font-family',"'DM Sans',sans-serif")
-    .style("font-weight","600");
+  // Cluster legend
+  const legend = svg.append("g").attr("transform", "translate(" + (width + margin.left + 15) + "," + (margin.top + 10) + ")");
+  legend.append("text").text("Clusters").style("font-size","12px").style("font-weight","700").style("fill","#333");
+  clusterIds.forEach(function(id, i) {
+    var lg = legend.append("g").attr("transform", "translate(0," + (20 + i * 22) + ")");
+    lg.append("rect").attr("width",14).attr("height",14).attr("rx",3).style("fill", colorScale(id));
+    lg.append("text").attr("x",20).attr("y",11).text("Group " + id).style("font-size","11px").style("fill","#555");
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -408,7 +436,13 @@ function renderForceGraph() {
   const rect = container.getBoundingClientRect();
   const width = rect.width, height = rect.height;
 
-  const colors = ["#857c85","#d27d7d","#c16548","#b960a7","#ddbd4d","#705177","#4ECDC4","#45B7D1"];
+  const nodeRadius = d3.scaleSqrt()
+    .domain([0, d3.max(nodes, d => d.size)])
+    .range([4, 18]);
+
+  const clusterPalette = ['#4E79A7','#F28E2B','#E15759','#76B7B2','#59A14F','#EDC948','#B07AA1','#FF9DA7'];
+  const color = d3.scaleOrdinal().domain([...new Set(nodes.map(d => d.group))].sort((a,b)=>a-b)).range(clusterPalette);
+
   var fisheye = d3.fisheye.circular().radius(200);
   const zoom = d3.zoom().scaleExtent([0.5,3]).on("zoom",function(){
     node.attr("transform",d3.event.transform);
@@ -416,14 +450,14 @@ function renderForceGraph() {
     text.attr("transform",d3.event.transform);
   });
 
-  const color = d3.scaleOrdinal(d3.schemeCategory20);
   const svg = d3.select("#forceGraph").append("svg").attr("width",width).attr("height",height);
   svg.call(zoom);
 
   const simulation = d3.forceSimulation()
-    .force("link",d3.forceLink().id(d=>d.id).distance(15).strength(0.13))
-    .force("charge",d3.forceManyBody().strength(-30))
-    .force("center",d3.forceCenter(width/2,height/2));
+    .force("link",d3.forceLink().id(d=>d.id).distance(25).strength(0.15))
+    .force("charge",d3.forceManyBody().strength(-50))
+    .force("center",d3.forceCenter(width/2,height/2))
+    .force("collision",d3.forceCollide().radius(d => nodeRadius(d.size) + 2));
 
   simulation.nodes(nodes).on("tick",ticked);
   simulation.force("link").links(links);
@@ -432,14 +466,17 @@ function renderForceGraph() {
 
   var link = svg.append("g").attr("class","links").selectAll("line")
     .data(links).enter().append("line")
+    .attr("stroke","#999").attr("stroke-opacity",0.25)
     .attr("stroke-width",d=>Math.sqrt(d.value));
 
   const singlNodeGroup = svg.selectAll(".node-group").data(nodes).enter().append("g");
 
   var node = singlNodeGroup.append("circle")
     .classed("node",true)
-    .attr("r",5)
+    .attr("r",d => nodeRadius(d.size))
     .attr("fill",d=>color(d.group))
+    .attr("stroke","#fff")
+    .attr("stroke-width",1.5)
     .call(d3.drag()
       .on("start",function(d){if(!d3.event.active)simulation.alphaTarget(0.3).restart();d.fx=d.x;d.fy=d.y})
       .on("drag",function(d){d.fx=d3.event.x;d.fy=d3.event.y})
@@ -447,14 +484,23 @@ function renderForceGraph() {
     )
     .on("mouseover",function(d){
       tooltip.transition().duration(200).style("opacity",0.9);
-      tooltip.html(d.label).style("left",(d3.event.pageX+15)+"px").style("top",(d3.event.pageY-10)+"px");
-      tooltip.style("background-color",color(d.group)).style("color","#000");
+      tooltip.html('<strong>' + d.label + '</strong><br>Cluster: ' + d.group + '<br>Size: ' + d.size.toFixed(2))
+        .style("left",(d3.event.pageX+15)+"px").style("top",(d3.event.pageY-10)+"px")
+        .style("background-color","#fff")
+        .style("color","#333")
+        .style("border","1px solid " + color(d.group))
+        .style("padding","8px 12px")
+        .style("border-radius","6px")
+        .style("box-shadow","0 2px 8px rgba(0,0,0,0.15)");
     })
     .on("mouseout",()=>tooltip.transition().duration(200).style("opacity",0));
 
   var text = singlNodeGroup.append("text")
     .attr("class","text")
-    .text(d=>d.label.length>20?d.label.substring(0,19)+'..':d.label);
+    .text(d=>d.label.length>20?d.label.substring(0,19)+'..':d.label)
+    .style("display", d => d.size > 1.5 ? "block" : "none")
+    .style("font-size","10px")
+    .style("fill","#ddd");
 
   function ticked(){
     link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y).attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);
@@ -467,7 +513,7 @@ function renderForceGraph() {
     fisheye.focus(d3.mouse(this));
     node.each(function(d){d.fisheye=fisheye(d)})
       .attr("cx",d=>d.fisheye.x).attr("cy",d=>d.fisheye.y)
-      .attr("r",d=>d.fisheye.z*4.5);
+      .attr("r",d=>d.fisheye.z * nodeRadius(d.size) * 0.8 + nodeRadius(d.size) * 0.2);
     link.attr("x1",d=>d.source.fisheye.x).attr("y1",d=>d.source.fisheye.y)
       .attr("x2",d=>d.target.fisheye.x).attr("y2",d=>d.target.fisheye.y);
     singlNodeGroup.select("text").attr("x",d=>d.fisheye.x+10).attr("y",d=>d.fisheye.y+2);
@@ -478,89 +524,229 @@ function renderForceGraph() {
 // 3D TERRAIN — Three.js with paraboloid profile (1-r²) from graph.py
 // No organic noise, no half-ellipse, clean mathematical surface
 // ═══════════════════════════════════════════════════════════════════════
-function heightToColor(h) {
-  const t = h / maxH;
-  if (t > .85) return {r:.92,g:.87,b:.8};
-  if (t > .65) return {r:.72,g:.62,b:.48};
-  if (t > .45) return {r:.58,g:.65,b:.38};
-  if (t > .25) return {r:.42,g:.58,b:.35};
-  if (t > .1)  return {r:.35,g:.5,b:.32};
-  if (t > .02) return {r:.28,g:.42,b:.28};
-  return {r:.12,g:.18,b:.28};
+function terrainColorSmooth(h) {
+    const stops = [
+        { t: 0.00, r: 0.56, g: 0.70, b: 0.52 },  // shore green
+        { t: 0.15, r: 0.36, g: 0.56, b: 0.30 },  // forest green
+        { t: 0.35, r: 0.45, g: 0.55, b: 0.32 },  // highland green
+        { t: 0.55, r: 0.58, g: 0.56, b: 0.38 },  // dry grass
+        { t: 0.75, r: 0.68, g: 0.60, b: 0.42 },  // tan
+        { t: 1.00, r: 0.90, g: 0.85, b: 0.75 },  // summit
+    ];
+    h = Math.max(0, Math.min(1, h));
+    for (let i = 0; i < stops.length - 1; i++) {
+        if (h <= stops[i + 1].t) {
+            const t = (h - stops[i].t) / (stops[i + 1].t - stops[i].t);
+            return {
+                r: stops[i].r + t * (stops[i + 1].r - stops[i].r),
+                g: stops[i].g + t * (stops[i + 1].g - stops[i].g),
+                b: stops[i].b + t * (stops[i + 1].b - stops[i].b),
+            };
+        }
+    }
+    return stops[stops.length - 1];
+}
+
+function addGridMarkers(scene, terrainSize) {
+    const half = terrainSize / 2;
+    const cols = ['A', 'B', 'C', 'D'];
+    const rows = ['1', '2', '3', '4'];
+    const step = terrainSize / 4;
+    for (let c = 0; c < 4; c++) {
+        for (let r = 0; r < 4; r++) {
+            const label = cols[c] + rows[r];
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 64; canvas.height = 64;
+            ctx.font = 'bold 32px monospace';
+            ctx.fillStyle = 'rgba(255,255,255,0.25)';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(label, 32, 32);
+            const tex = new THREE.CanvasTexture(canvas);
+            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+            sprite.position.set(-half + step * (c + 0.5), 0.05, -half + step * (r + 0.5));
+            sprite.scale.set(2.5, 2.5, 1);
+            scene.add(sprite);
+        }
+    }
+}
+
+function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale, gridN) {
+    const half = terrainSize / 2;
+    for (const t of topics) {
+        if (t.height < 0.03) continue;
+        const gx = t.gridPos ? t.gridPos.gx : Math.floor(gridN / 2);
+        const gy = t.gridPos ? t.gridPos.gy : Math.floor(gridN / 2);
+        const worldX = (gx / gridN - 0.5) * terrainSize;
+        const worldZ = -(gy / gridN - 0.5) * terrainSize;
+        const h = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
+        const worldY = h * heightScale + 1.5;
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 512; canvas.height = 72;
+        const fontSize = t.height > 0.6 ? 28 : t.height > 0.3 ? 22 : 16;
+        ctx.font = `bold ${fontSize}px 'DM Sans', sans-serif`;
+        const tm = ctx.measureText(t.label);
+        const bgW = Math.min(500, tm.width + 24);
+        const bgX = 256 - bgW / 2;
+        ctx.fillStyle = 'rgba(255,255,250,0.85)';
+        ctx.beginPath();
+        ctx.roundRect(bgX, 10, bgW, fontSize + 16, 8);
+        ctx.fill();
+        ctx.fillStyle = '#2a2a20';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(t.label, 256, 10 + (fontSize + 16) / 2);
+
+        const tex = new THREE.CanvasTexture(canvas);
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+        sprite.position.set(worldX, worldY, worldZ);
+        const spriteScale = t.height > 0.6 ? 8 : t.height > 0.3 ? 6 : 4.5;
+        sprite.scale.set(spriteScale, spriteScale * 72 / 512, 1);
+        scene.add(sprite);
+    }
 }
 
 function init3D() {
   const c = document.getElementById('container3d'), W = c.clientWidth, H = c.clientHeight;
-  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x8aaabe); scene.fog = new THREE.FogExp2(0x8aaabe, 0.025);
-  const camera = new THREE.PerspectiveCamera(50, W/H, 0.1, 1000); camera.position.set(0, 12, 22); camera.lookAt(0,0,0);
-  const renderer = new THREE.WebGLRenderer({antialias:true}); renderer.setSize(W,H); renderer.setPixelRatio(Math.min(devicePixelRatio,2)); c.appendChild(renderer.domElement);
-  scene.add(new THREE.AmbientLight(0x99aabb, 0.6));
-  const sun = new THREE.DirectionalLight(0xfff4e0, 1); sun.position.set(8,15,5); scene.add(sun);
-  const fill = new THREE.DirectionalLight(0x88aacc, 0.3); fill.position.set(-5,8,-8); scene.add(fill);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87CEEB);
+  scene.fog = new THREE.FogExp2(0x87CEEB, 0.012);
+  const camera = new THREE.PerspectiveCamera(45, W/H, 0.1, 1000);
+  camera.position.set(0, 18, 28);
+  camera.lookAt(0,0,0);
+  const renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(W,H);
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  c.appendChild(renderer.domElement);
 
-  // Compute xyLim from data, matching original graph.py defaults
-  const dataXYLim = Math.max(...TOPICS.map(t=>Math.abs(t.x)),...TOPICS.map(t=>Math.abs(t.y)),0.3) * 1.2;
-  const gridN = 200, spreadN = 1.66, heightScale = 22;
+  // Lighting
+  scene.add(new THREE.AmbientLight(0xB0C4DE, 0.5));
+  const sun = new THREE.DirectionalLight(0xFFF8E7, 1.0); sun.position.set(10, 20, 8); scene.add(sun);
+  const fill = new THREE.DirectionalLight(0x8EC8E8, 0.25); fill.position.set(-8, 10, -10); scene.add(fill);
 
-  // Build grid with PARABOLOID profile: val = (1 - dist²/radius²) * height
-  // MAX accumulation — matches original graph.py exactly
-  const grid = new Float32Array(gridN * gridN);
-  for (const t of TOPICS) {
-    const gx = (t.x + dataXYLim) / (2 * dataXYLim) * gridN;
-    const gy = (t.y + dataXYLim) / (2 * dataXYLim) * gridN;
-    const gr = Math.max(3, t.size / (2 * dataXYLim) * gridN * spreadN);
-    const xS = Math.max(0, Math.floor(gx - gr)), xE = Math.min(gridN, Math.ceil(gx + gr));
-    const yS = Math.max(0, Math.floor(gy - gr)), yE = Math.min(gridN, Math.ceil(gy + gr));
-    for (let i = xS; i < xE; i++) {
-      for (let j = yS; j < yE; j++) {
-        const dist = Math.sqrt((i-gx)*(i-gx) + (j-gy)*(j-gy));
-        if (dist < gr) {
-          const val = (1 - dist*dist/(gr*gr)) * t.height;  // PARABOLOID
-          const idx = i * gridN + j;
-          if (val > grid[idx]) grid[idx] = val;  // MAX
+  const terrainSize = 30;
+  const heightScale = 15;
+
+  if (HEIGHTMAP && HEIGHTMAP.heightmap) {
+    // ── Server heightmap path ──────────────────────────────────────
+    const gridN = HEIGHTMAP.grid_size;
+
+    const geo = new THREE.PlaneGeometry(terrainSize, terrainSize, gridN - 1, gridN - 1);
+    geo.rotateX(-Math.PI / 2);
+
+    const verts = geo.attributes.position;
+    const colors = new Float32Array(verts.count * 3);
+
+    for (let i = 0; i < verts.count; i++) {
+        const ix = i % gridN;
+        const iy = Math.floor(i / gridN);
+        const h = HEIGHTMAP.heightmap[iy][ix];
+        verts.setY(i, h * heightScale);
+        const col = terrainColorSmooth(h);
+        colors[i * 3] = col.r;
+        colors[i * 3 + 1] = col.g;
+        colors[i * 3 + 2] = col.b;
+    }
+
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+
+    const mesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
+        vertexColors: true, shininess: 8, specular: 0x111111,
+        side: THREE.DoubleSide, flatShading: false
+    }));
+    scene.add(mesh);
+
+    // Ocean
+    const oceanGeo = new THREE.PlaneGeometry(120, 120);
+    oceanGeo.rotateX(-Math.PI / 2);
+    scene.add(new THREE.Mesh(oceanGeo, new THREE.MeshPhongMaterial({
+        color: 0x1A6B8A, shininess: 90, transparent: true, opacity: 0.82, specular: 0x4488AA
+    })));
+
+    // Grid markers and labels
+    addGridMarkers(scene, terrainSize);
+    addTerrainLabels(scene, TOPICS, HEIGHTMAP, terrainSize, heightScale, gridN);
+
+  } else {
+    // ── Fallback: client-side heightmap generation ─────────────────
+    const dataXYLim = Math.max(...TOPICS.map(t=>Math.abs(t.x)),...TOPICS.map(t=>Math.abs(t.y)),0.3) * 1.2;
+    const gridN = 200, spreadN = 1.66, fallbackHeightScale = 22;
+
+    const grid = new Float32Array(gridN * gridN);
+    for (const t of TOPICS) {
+      const gx = (t.x + dataXYLim) / (2 * dataXYLim) * gridN;
+      const gy = (t.y + dataXYLim) / (2 * dataXYLim) * gridN;
+      const gr = Math.max(3, t.size / (2 * dataXYLim) * gridN * spreadN);
+      const xS = Math.max(0, Math.floor(gx - gr)), xE = Math.min(gridN, Math.ceil(gx + gr));
+      const yS = Math.max(0, Math.floor(gy - gr)), yE = Math.min(gridN, Math.ceil(gy + gr));
+      for (let i = xS; i < xE; i++) {
+        for (let j = yS; j < yE; j++) {
+          const dist = Math.sqrt((i-gx)*(i-gx) + (j-gy)*(j-gy));
+          if (dist < gr) {
+            const val = (1 - dist*dist/(gr*gr)) * t.height;
+            const idx = i * gridN + j;
+            if (val > grid[idx]) grid[idx] = val;
+          }
         }
       }
     }
+
+    const maxGrid = Math.max(...grid) || 1;
+    const geo = new THREE.PlaneGeometry(terrainSize, terrainSize, gridN-1, gridN-1);
+    geo.rotateX(-Math.PI/2);
+    const verts = geo.attributes.position, colors = new Float32Array(verts.count * 3);
+    for (let i = 0; i < verts.count; i++) {
+      const ix = i % gridN, iy = Math.floor(i / gridN);
+      const h = grid[iy * gridN + ix];
+      const hNorm = h / maxGrid;
+      verts.setY(i, hNorm * heightScale);
+      const co = terrainColorSmooth(hNorm);
+      colors[i*3]=co.r; colors[i*3+1]=co.g; colors[i*3+2]=co.b;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+    scene.add(new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
+        vertexColors: true, shininess: 8, specular: 0x111111,
+        side: THREE.DoubleSide, flatShading: false
+    })));
+
+    // Ocean
+    const oceanGeo = new THREE.PlaneGeometry(120, 120);
+    oceanGeo.rotateX(-Math.PI / 2);
+    scene.add(new THREE.Mesh(oceanGeo, new THREE.MeshPhongMaterial({
+        color: 0x1A6B8A, shininess: 90, transparent: true, opacity: 0.82, specular: 0x4488AA
+    })));
+
+    // Labels (fallback)
+    for (const t of TOPICS) {
+      if (t.height < 0.04) continue;
+      const cv = document.createElement('canvas'), cx = cv.getContext('2d'); cv.width=512; cv.height=72; cx.clearRect(0,0,512,72);
+      const fs = t.height>0.2?26:t.height>0.1?21:16;
+      cx.font = `bold ${fs}px 'DM Sans',sans-serif`;
+      const tm = cx.measureText(t.label), bw = Math.min(500, tm.width+20), bx = 256-bw/2;
+      cx.fillStyle = 'rgba(255,255,245,0.75)'; cx.beginPath(); cx.roundRect(bx,10,bw,fs+14,6); cx.fill();
+      cx.fillStyle = '#2a2a20'; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(t.label, 256, 10+(fs+14)/2);
+      const tex = new THREE.CanvasTexture(cv);
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true, depthTest:false}));
+      const sx = ((t.x+dataXYLim)/(2*dataXYLim) - 0.5) * terrainSize;
+      const sz = -((t.y+dataXYLim)/(2*dataXYLim) - 0.5) * terrainSize;
+      sp.position.set(sx, t.height*fallbackHeightScale+2, sz); sp.scale.set(7,1,1); scene.add(sp);
+    }
+
+    addGridMarkers(scene, terrainSize);
   }
 
-  // Build mesh
-  const geo = new THREE.PlaneGeometry(28, 28, gridN-1, gridN-1); geo.rotateX(-Math.PI/2);
-  const verts = geo.attributes.position, colors = new Float32Array(verts.count * 3);
-  for (let i = 0; i < verts.count; i++) {
-    const ix = i % gridN, iy = Math.floor(i / gridN);
-    const h = grid[iy * gridN + ix];
-    verts.setY(i, h * heightScale);
-    const co = heightToColor(h); colors[i*3]=co.r; colors[i*3+1]=co.g; colors[i*3+2]=co.b;
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3)); geo.computeVertexNormals();
-  scene.add(new THREE.Mesh(geo, new THREE.MeshPhongMaterial({vertexColors:true, shininess:15, specular:0x222222, side:THREE.DoubleSide, flatShading:false})));
-
-  // Ocean
-  const seaGeo = new THREE.PlaneGeometry(80, 80); seaGeo.rotateX(-Math.PI/2);
-  scene.add(new THREE.Mesh(seaGeo, new THREE.MeshPhongMaterial({color:0x3a5a7a, shininess:60, transparent:true, opacity:0.85})));
-
-  // Labels
-  for (const t of TOPICS) {
-    if (t.height < 0.04) continue;
-    const cv = document.createElement('canvas'), cx = cv.getContext('2d'); cv.width=512; cv.height=72; cx.clearRect(0,0,512,72);
-    const fs = t.height>0.2?26:t.height>0.1?21:16;
-    cx.font = `bold ${fs}px 'DM Sans',sans-serif`;
-    const tm = cx.measureText(t.label), bw = Math.min(500, tm.width+20), bx = 256-bw/2;
-    cx.fillStyle = 'rgba(255,255,245,0.75)'; cx.beginPath(); cx.roundRect(bx,10,bw,fs+14,6); cx.fill();
-    cx.fillStyle = '#2a2a20'; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(t.label, 256, 10+(fs+14)/2);
-    const tex = new THREE.CanvasTexture(cv);
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true, depthTest:false}));
-    const sx = ((t.x+dataXYLim)/(2*dataXYLim) - 0.5) * 28;
-    const sz = -((t.y+dataXYLim)/(2*dataXYLim) - 0.5) * 28;
-    sp.position.set(sx, t.height*heightScale+2, sz); sp.scale.set(7,1,1); scene.add(sp);
-  }
   return {scene, camera, renderer};
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 // 3D CONTROLS — orbit + fly
 // ═══════════════════════════════════════════════════════════════════════
-let orbit = {drag:false, lx:0, ly:0, theta:.3, phi:.9, dist:22};
+let orbit = {drag:false, lx:0, ly:0, theta:.3, phi:.8, dist:26};
 function updateOrbit(cam) { cam.position.x=orbit.dist*Math.sin(orbit.phi)*Math.sin(orbit.theta); cam.position.y=orbit.dist*Math.cos(orbit.phi); cam.position.z=orbit.dist*Math.sin(orbit.phi)*Math.cos(orbit.theta); cam.lookAt(0,0,0); }
 function attachOrbit(cam, el) {
   updateOrbit(cam);
@@ -622,7 +808,7 @@ function renderCurrent(){
   // 3D or fly — both use Three.js terrain
   const c3=document.getElementById('container3d');c3.style.display='block';c3.innerHTML='';
   const{scene,camera,renderer}=init3D(); attachOrbit(camera,renderer.domElement); attachFly(camera,renderer.domElement);
-  if(currentMode==='3d'){orbit={drag:false,lx:0,ly:0,theta:.3,phi:.9,dist:22};updateOrbit(camera)}
+  if(currentMode==='3d'){orbit={drag:false,lx:0,ly:0,theta:.3,phi:.8,dist:26};updateOrbit(camera)}
   else{camera.position.set(-12,6,18);camera.rotation.order='YXZ';camera.lookAt(0,3,0)}
   c3.focus();
   function anim(){animFrame=requestAnimationFrame(anim);tickFly(camera);renderer.render(scene,camera)}anim();
