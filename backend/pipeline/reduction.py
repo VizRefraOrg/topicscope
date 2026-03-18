@@ -110,16 +110,10 @@ def cluster_entities(coords_2d, n_entities):
     return labels
 
 
-def generate_heightmap(coords_2d, saliences, heights, grid_size=200,
-                       sigma_pct=0.08, sea_level_percentile=15):
+def generate_heightmap(coords_2d, saliences, heights, grid_size=200):
     """Generate a Gaussian terrain heightmap from entity positions and weights."""
+    from scipy.spatial.distance import cdist
     N = len(coords_2d)
-
-    # Adaptive sigma: more spread for fewer entities
-    if N < 10:
-        sigma_pct = 0.12
-    elif N < 20:
-        sigma_pct = 0.10
 
     margin = int(grid_size * 0.10)
 
@@ -133,16 +127,15 @@ def generate_heightmap(coords_2d, saliences, heights, grid_size=200,
         else:
             coords[:, dim] = margin + (coords[:, dim] - cmin) / span * (grid_size - 2 * margin)
 
-    # Weights = saliences * heights, LOG-COMPRESSED to prevent single-entity spikes
-    # Without log, one entity at salience 0.95 dominates everything at 0.01
+    # FIX 2: Sqrt weight compression + high floor (0.35)
+    # Prevents one entity from creating a 40:1 spike
     raw_weights = np.array(saliences) * np.array(heights)
     raw_weights = np.clip(raw_weights, 1e-6, None)
-    weights = np.log1p(raw_weights * 10)  # log(1 + x*10) compresses the range
+    weights = np.sqrt(raw_weights)
     w_max = weights.max()
     if w_max > 1e-9:
         weights = weights / w_max
-    # Ensure minimum weight so every entity contributes visible terrain
-    weights = np.clip(weights, 0.15, 1.0)
+    weights = np.clip(weights, 0.35, 1.0)
 
     # Place weighted points on grid (SUM accumulation)
     grid = np.zeros((grid_size, grid_size), dtype=float)
@@ -153,26 +146,28 @@ def generate_heightmap(coords_2d, saliences, heights, grid_size=200,
         grid[gy, gx] += weights[i]
         entity_grid_positions.append({"gx": gx, "gy": gy})
 
-    # Broad Gaussian pass — large sigma for connected landmass
-    sigma = sigma_pct * grid_size
+    # FIX 1: Adaptive sigma from median nearest-neighbor distance
+    if N >= 2:
+        dists = cdist(coords, coords)
+        np.fill_diagonal(dists, np.inf)
+        nearest_dists = dists.min(axis=1)
+        median_nn = np.median(nearest_dists)
+        sigma = max(median_nn * 1.2, grid_size * 0.06)
+        sigma = min(sigma, grid_size * 0.25)
+    else:
+        sigma = grid_size * 0.15
+
+    # FIX 4: Broad + peaked blend (65/35)
     broad = gaussian_filter(grid, sigma=sigma)
-
-    # Peaked Gaussian pass — tighter for visible summits
-    peak_sigma = sigma * 0.35
+    peak_sigma = max(sigma * 0.4, 5.0)
     peaked = gaussian_filter(grid, sigma=peak_sigma)
+    blended = 0.65 * broad + 0.35 * peaked
 
-    # Blend: 75% broad (connectivity) + 25% peaked (distinct mountains)
-    blended = 0.75 * broad + 0.25 * peaked
-
-    # Sea level: LOW percentile so most terrain stays above water
-    nonzero_vals = blended[blended > 0.0005]
-    if len(nonzero_vals) > 0:
-        sea_level = np.percentile(nonzero_vals, sea_level_percentile)
-        blended = blended - sea_level
-        blended = np.clip(blended, 0, None)
-        bmax = blended.max()
-        if bmax > 1e-9:
-            blended = blended / bmax
+    # FIX 3: No sea level subtraction — just normalize + gamma
+    bmax = blended.max()
+    if bmax > 1e-9:
+        blended = blended / bmax
+    blended = np.power(blended, 0.7)
 
     bounds = {
         "x_min": float(margin),
