@@ -529,13 +529,17 @@ function renderForceGraph() {
 // No organic noise, no half-ellipse, clean mathematical surface
 // ═══════════════════════════════════════════════════════════════════════
 function terrainColorSmooth(h) {
+    // Topographic island color ramp: green shores -> olive -> tan -> brown -> snow
+    // Designed to match classic topographic map elevation bands
     const stops = [
-        { t: 0.00, r: 0.20, g: 0.45, b: 0.15 },  // dark green (shore)
-        { t: 0.20, r: 0.30, g: 0.55, b: 0.20 },  // medium green (lowland)
-        { t: 0.40, r: 0.55, g: 0.58, b: 0.28 },  // olive/dry grass
-        { t: 0.60, r: 0.72, g: 0.58, b: 0.35 },  // tan/brown (highland)
-        { t: 0.80, r: 0.82, g: 0.72, b: 0.55 },  // light brown/sandy
-        { t: 1.00, r: 0.97, g: 0.95, b: 0.92 },  // white/snow summit
+        { t: 0.00, r: 0.18, g: 0.48, b: 0.14 },  // deep green (shoreline)
+        { t: 0.15, r: 0.32, g: 0.56, b: 0.20 },  // medium green (lowland)
+        { t: 0.30, r: 0.50, g: 0.56, b: 0.25 },  // olive-green (foothills)
+        { t: 0.45, r: 0.65, g: 0.55, b: 0.30 },  // olive-tan (mid elevation)
+        { t: 0.60, r: 0.76, g: 0.62, b: 0.38 },  // tan (highland)
+        { t: 0.75, r: 0.84, g: 0.74, b: 0.52 },  // light tan/sandy
+        { t: 0.88, r: 0.90, g: 0.85, b: 0.72 },  // pale sandy-brown
+        { t: 1.00, r: 0.97, g: 0.95, b: 0.92 },  // snow/summit white
     ];
     h = Math.max(0, Math.min(1, h));
     for (let i = 0; i < stops.length - 1; i++) {
@@ -613,13 +617,13 @@ function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale
         const ctx = canvas.getContext('2d');
         canvas.width = 512; canvas.height = 56;
 
-        const fontSize = 13;
-        const spriteScale = 3.5;
+        const fontSize = 17;
+        const spriteScale = 5.5;
         ctx.font = `600 ${fontSize}px 'DM Sans', sans-serif`;
         const tm = ctx.measureText(ent.name);
-        const bgW = Math.min(490, tm.width + 18);
+        const bgW = Math.min(490, tm.width + 20);
         const bgX = 256 - bgW / 2;
-        ctx.fillStyle = 'rgba(230,235,240,0.6)';
+        ctx.fillStyle = 'rgba(235,240,245,0.72)';
         ctx.beginPath();
         ctx.roundRect(bgX, 12, bgW, fontSize + 12, 5);
         ctx.fill();
@@ -667,18 +671,24 @@ function init3D() {
     const verts = geo.attributes.position;
     const colors = new Float32Array(verts.count * 3);
 
-    // Compute land-only min/max for contrast stretching
+    // Compute land-only min/max and percentile-based contrast stretching
     let hLandMin = Infinity, hLandMax = -Infinity;
+    const landValues = [];
     for (let iy = 0; iy < gridN; iy++) {
         for (let ix = 0; ix < gridN; ix++) {
             const h = HEIGHTMAP.heightmap[iy][ix];
             if (h > 0.001) {
+                landValues.push(h);
                 if (h < hLandMin) hLandMin = h;
                 if (h > hLandMax) hLandMax = h;
             }
         }
     }
-    const hLandRange = (hLandMax - hLandMin) > 0.001 ? (hLandMax - hLandMin) : 1;
+    // Percentile-based stretch: use 2nd and 98th percentile as range
+    landValues.sort((a, b) => a - b);
+    const pLow = landValues[Math.floor(landValues.length * 0.02)] || hLandMin;
+    const pHigh = landValues[Math.floor(landValues.length * 0.98)] || hLandMax;
+    const pRange = (pHigh - pLow) > 0.001 ? (pHigh - pLow) : 1;
 
     for (let i = 0; i < verts.count; i++) {
         const ix = i % gridN;
@@ -691,8 +701,10 @@ function init3D() {
             colors[i * 3 + 1] = 0.18;
             colors[i * 3 + 2] = 0.30;
         } else {
-            // Land: stretch to full [0,1] for color mapping
-            const hStretched = (h - hLandMin) / hLandRange;
+            // Land: percentile stretch with mild power curve
+            // Backend already does histogram equalization, so keep frontend gentle
+            let hStretched = Math.max(0, Math.min(1, (h - pLow) / pRange));
+            hStretched = Math.pow(hStretched, 0.7);
             verts.setY(i, h * heightScale);
             const col = terrainColorSmooth(hStretched);
             colors[i * 3]     = col.r;
