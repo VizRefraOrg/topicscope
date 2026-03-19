@@ -154,6 +154,7 @@ textarea::placeholder{color:rgba(140,130,180,0.4)}
 let TOPICS = [];          // normalized for terrain
 let RAW_ENTITIES = [];    // API entities in D3-compatible format {entity,x,y,size,tag,cluster,salience}
 let HEIGHTMAP = null;
+let ALL_ENTITY_POSITIONS = [];
 let currentMode = '2d';
 let animFrame = null;
 let maxH = 0.28;
@@ -240,6 +241,9 @@ function processResults(data) {
 
   // Store server-computed heightmap
   HEIGHTMAP = data.heightmap || null;
+
+  // Store all entity positions (includes non-topic NER entities for 3D labels)
+  ALL_ENTITY_POSITIONS = data.all_entity_positions || [];
 
   // Metadata
   document.getElementById('m-words').textContent=data.metadata.word_count;
@@ -547,32 +551,8 @@ function terrainColorSmooth(h) {
     return stops[stops.length - 1];
 }
 
-function addGridMarkers(scene, terrainSize) {
-    const half = terrainSize / 2;
-    const cols = ['A', 'B', 'C', 'D'];
-    const rows = ['1', '2', '3', '4'];
-    const step = terrainSize / 4;
-    for (let c = 0; c < 4; c++) {
-        for (let r = 0; r < 4; r++) {
-            const label = cols[c] + rows[r];
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = 64; canvas.height = 64;
-            ctx.font = 'bold 32px monospace';
-            ctx.fillStyle = 'rgba(255,255,255,0.25)';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(label, 32, 32);
-            const tex = new THREE.CanvasTexture(canvas);
-            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-            sprite.position.set(-half + step * (c + 0.5), 0.05, -half + step * (r + 0.5));
-            sprite.scale.set(2.5, 2.5, 1);
-            scene.add(sprite);
-        }
-    }
-}
-
-function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale, gridN) {
+function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale, gridN, allEntityPositions) {
+    // Render main topic labels (larger, on peaks)
     for (const t of topics) {
         const gx = t.gridPos ? t.gridPos.gx : Math.floor(gridN / 2);
         const gy = t.gridPos ? t.gridPos.gy : Math.floor(gridN / 2);
@@ -613,6 +593,47 @@ function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale
         sprite.scale.set(spriteScale, spriteScale * 72 / 512, 1);
         scene.add(sprite);
     }
+
+    // Render non-topic NER entity labels (smaller, on shores)
+    if (!allEntityPositions || !allEntityPositions.length) return;
+    const topicNames = new Set(topics.map(t => t.label.toLowerCase()));
+    for (const ent of allEntityPositions) {
+        if (ent.is_topic) continue;
+        if (topicNames.has(ent.name.toLowerCase())) continue;
+
+        const gx = ent.grid_gx;
+        const gy = ent.grid_gy;
+        if (gx < 0 || gy < 0 || gy >= heightmapData.heightmap.length || gx >= heightmapData.heightmap[0].length) continue;
+        const worldX = (gx / gridN - 0.5) * terrainSize;
+        const worldZ = -(gy / gridN - 0.5) * terrainSize;
+        const rawH = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
+        const terrainY = rawH < 0.001 ? 0.2 : rawH * heightScale + 0.4;
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 512; canvas.height = 56;
+
+        const fontSize = 13;
+        const spriteScale = 3.5;
+        ctx.font = `600 ${fontSize}px 'DM Sans', sans-serif`;
+        const tm = ctx.measureText(ent.name);
+        const bgW = Math.min(490, tm.width + 18);
+        const bgX = 256 - bgW / 2;
+        ctx.fillStyle = 'rgba(230,235,240,0.6)';
+        ctx.beginPath();
+        ctx.roundRect(bgX, 12, bgW, fontSize + 12, 5);
+        ctx.fill();
+        ctx.fillStyle = '#3a3a35';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(ent.name, 256, 12 + (fontSize + 12) / 2);
+
+        const tex = new THREE.CanvasTexture(canvas);
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+        sprite.position.set(worldX, terrainY, worldZ);
+        sprite.scale.set(spriteScale, spriteScale * 56 / 512, 1);
+        scene.add(sprite);
+    }
 }
 
 function init3D() {
@@ -646,15 +667,38 @@ function init3D() {
     const verts = geo.attributes.position;
     const colors = new Float32Array(verts.count * 3);
 
+    // Compute land-only min/max for contrast stretching
+    let hLandMin = Infinity, hLandMax = -Infinity;
+    for (let iy = 0; iy < gridN; iy++) {
+        for (let ix = 0; ix < gridN; ix++) {
+            const h = HEIGHTMAP.heightmap[iy][ix];
+            if (h > 0.001) {
+                if (h < hLandMin) hLandMin = h;
+                if (h > hLandMax) hLandMax = h;
+            }
+        }
+    }
+    const hLandRange = (hLandMax - hLandMin) > 0.001 ? (hLandMax - hLandMin) : 1;
+
     for (let i = 0; i < verts.count; i++) {
         const ix = i % gridN;
         const iy = Math.floor(i / gridN);
         const h = HEIGHTMAP.heightmap[iy][ix];
-        verts.setY(i, h < 0.001 ? -0.15 : h * heightScale);
-        const col = h < 0.001 ? {r:0.12, g:0.25, b:0.35} : terrainColorSmooth(h);
-        colors[i * 3] = col.r;
-        colors[i * 3 + 1] = col.g;
-        colors[i * 3 + 2] = col.b;
+        if (h < 0.001) {
+            // Ocean: push well below water plane
+            verts.setY(i, -0.3);
+            colors[i * 3]     = 0.08;
+            colors[i * 3 + 1] = 0.18;
+            colors[i * 3 + 2] = 0.30;
+        } else {
+            // Land: stretch to full [0,1] for color mapping
+            const hStretched = (h - hLandMin) / hLandRange;
+            verts.setY(i, h * heightScale);
+            const col = terrainColorSmooth(hStretched);
+            colors[i * 3]     = col.r;
+            colors[i * 3 + 1] = col.g;
+            colors[i * 3 + 2] = col.b;
+        }
     }
 
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
@@ -674,7 +718,7 @@ function init3D() {
     })));
 
     // Labels (no grid markers)
-    addTerrainLabels(scene, TOPICS, HEIGHTMAP, terrainSize, heightScale, gridN);
+    addTerrainLabels(scene, TOPICS, HEIGHTMAP, terrainSize, heightScale, gridN, ALL_ENTITY_POSITIONS);
 
   } else {
     // ── Fallback: client-side heightmap generation ─────────────────

@@ -163,14 +163,28 @@ def generate_heightmap(coords_2d, saliences, heights, grid_size=200):
     peaked = gaussian_filter(grid, sigma=peak_sigma)
     blended = 0.65 * broad + 0.35 * peaked
 
-    # Normalize, sharper gamma, then sea-level cutoff for ocean visibility
+    # Normalize
     bmax = blended.max()
     if bmax > 1e-9:
         blended = blended / bmax
-    blended = np.power(blended, 0.5)
 
-    # Sea level cutoff: push low-density areas to zero (exposes ocean)
-    sea_cutoff = 0.15
+    # Island mask: only cells within island_radius of any entity are land.
+    # This prevents Gaussian tails from filling the entire ocean.
+    island_radius = sigma * 2.5
+    yy, xx = np.mgrid[0:grid_size, 0:grid_size]
+    mask = np.zeros((grid_size, grid_size), dtype=bool)
+    for i in range(N):
+        gx = int(np.clip(coords[i, 0], 0, grid_size - 1))
+        gy = int(np.clip(coords[i, 1], 0, grid_size - 1))
+        dist_sq = (xx - gx) ** 2 + (yy - gy) ** 2
+        mask |= (dist_sq < island_radius ** 2)
+    blended[~mask] = 0.0
+
+    # Gamma 0.7: preserves more elevation contrast than 0.5
+    blended = np.power(blended, 0.7)
+
+    # Sea level cutoff: clean up shore edges
+    sea_cutoff = 0.10
     blended = np.where(blended < sea_cutoff, 0.0, (blended - sea_cutoff) / (1.0 - sea_cutoff))
 
     bounds = {
@@ -187,6 +201,91 @@ def generate_heightmap(coords_2d, saliences, heights, grid_size=200):
         "bounds": bounds,
         "entity_grid_positions": entity_grid_positions,
     }
+
+
+def compute_entity_grid_positions(entities, candidates, heightmap_data, grid_size=200):
+    """Compute grid positions for ALL NER entities, including those not in candidates.
+
+    Entities matching a candidate get that candidate's grid position.
+    Non-matching entities are placed at the shore of the nearest matching entity's island.
+    """
+    if not entities or not heightmap_data.get("entity_grid_positions"):
+        return []
+
+    margin = int(grid_size * 0.10)
+    candidate_titles_lower = {c["title"].lower(): i for i, c in enumerate(candidates)}
+
+    entity_positions = []
+    for ent in entities:
+        name_lower = ent["name"].lower()
+
+        if name_lower in candidate_titles_lower:
+            idx = candidate_titles_lower[name_lower]
+            gpos = heightmap_data["entity_grid_positions"][idx]
+            entity_positions.append({
+                "name": ent["name"],
+                "type": ent.get("type", "MISC"),
+                "confidence": ent.get("confidence", 0.0),
+                "salience": ent.get("salience", 0.0),
+                "grid_gx": gpos["gx"],
+                "grid_gy": gpos["gy"],
+                "is_topic": True,
+            })
+        else:
+            # Find nearest candidate by name overlap; distribute evenly if no match
+            best_idx = hash(name_lower) % len(candidates)  # default: distribute by hash
+            best_score = 0
+            for title_lower, idx in candidate_titles_lower.items():
+                score = 0
+                if name_lower in title_lower or title_lower in name_lower:
+                    score = 2
+                else:
+                    words_e = set(name_lower.split())
+                    words_c = set(title_lower.split())
+                    overlap = words_e & words_c
+                    score = len(overlap) / max(len(words_e), 1)
+                if score > best_score:
+                    best_score = score
+                    best_idx = idx
+
+            gpos = heightmap_data["entity_grid_positions"][best_idx]
+            base_gx, base_gy = gpos["gx"], gpos["gy"]
+
+            # Search radially outward for a shore position (low but non-zero elevation)
+            hmap = np.array(heightmap_data["heightmap"])
+            best_shore_gx, best_shore_gy = base_gx, base_gy
+            best_shore_h = 999
+            for angle_step in range(8):
+                angle = angle_step * (np.pi / 4)
+                for r in range(5, 40, 3):
+                    sx = int(base_gx + r * np.cos(angle))
+                    sy = int(base_gy + r * np.sin(angle))
+                    if 0 <= sx < grid_size and 0 <= sy < grid_size:
+                        sh = hmap[sy, sx]
+                        if 0.001 < sh < 0.15 and sh < best_shore_h:
+                            best_shore_h = sh
+                            best_shore_gx = sx
+                            best_shore_gy = sy
+
+            # Fallback: offset slightly from parent entity
+            if best_shore_h == 999:
+                rng = np.random.RandomState(hash(name_lower) % 2**31)
+                offset_x = rng.randint(-10, 11)
+                offset_y = rng.randint(-10, 11)
+                best_shore_gx = int(np.clip(base_gx + offset_x, margin, grid_size - margin))
+                best_shore_gy = int(np.clip(base_gy + offset_y, margin, grid_size - margin))
+
+            entity_positions.append({
+                "name": ent["name"],
+                "type": ent.get("type", "MISC"),
+                "confidence": ent.get("confidence", 0.0),
+                "salience": ent.get("salience", 0.0),
+                "grid_gx": best_shore_gx,
+                "grid_gy": best_shore_gy,
+                "is_topic": False,
+            })
+
+    return entity_positions
 
 
 def compute_distance_and_reduce(
@@ -292,9 +391,15 @@ def compute_distance_and_reduce(
             row[topic_labels[j]] = round(float(dist_matrix[i][j]), 4)
         dm_list.append({"topic": topic_labels[i], "distances": row})
 
+    # Compute grid positions for ALL NER entities (for 3D label placement)
+    all_entity_positions = compute_entity_grid_positions(
+        entities or [], candidates, heightmap_data
+    )
+
     return {
         "candidates": candidates,
         "distance_matrix": dm_list,
         "heightmap": heightmap_data,
         "debug": debug_info,
+        "all_entity_positions": all_entity_positions,
     }

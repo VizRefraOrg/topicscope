@@ -50,6 +50,7 @@ class EntityResult(BaseModel):
 class AnalyseResponse(BaseModel):
     topics: list[TopicResult]
     entities: list[EntityResult]
+    all_entity_positions: list = []
     metadata: dict
     debug: list = []
     distance_matrix: list = []
@@ -101,6 +102,7 @@ async def run_analysis(text: str) -> AnalyseResponse:
         debug_data = result.get("debug", [])
         dist_matrix = result.get("distance_matrix", [])
         heightmap_data = result.get("heightmap", {})
+        all_entity_positions = result.get("all_entity_positions", [])
 
         from backend.pipeline.clustering import process_topics
         final_topics = process_topics(candidates)
@@ -131,6 +133,7 @@ async def run_analysis(text: str) -> AnalyseResponse:
 
         return AnalyseResponse(
             topics=topics_out, entities=entities_out,
+            all_entity_positions=all_entity_positions,
             metadata={
                 "word_count": word_count, "entities_found": len(entities),
                 "candidates_discovered": len(candidates),
