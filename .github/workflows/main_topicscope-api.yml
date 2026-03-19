@@ -73,4 +73,5 @@ jobs:
         with:
           app-name: 'topicscope-api'
           slot-name: 'Production'
+          clean: true
           startup-command: 'gunicorn --bind=0.0.0.0 --timeout 600 -k uvicorn.workers.UvicornWorker backend.main:app'
