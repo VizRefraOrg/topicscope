@@ -526,12 +526,12 @@ function renderForceGraph() {
 // ═══════════════════════════════════════════════════════════════════════
 function terrainColorSmooth(h) {
     const stops = [
-        { t: 0.00, r: 0.56, g: 0.70, b: 0.52 },  // shore green
-        { t: 0.15, r: 0.36, g: 0.56, b: 0.30 },  // forest green
-        { t: 0.35, r: 0.45, g: 0.55, b: 0.32 },  // highland green
-        { t: 0.55, r: 0.58, g: 0.56, b: 0.38 },  // dry grass
-        { t: 0.75, r: 0.68, g: 0.60, b: 0.42 },  // tan
-        { t: 1.00, r: 0.90, g: 0.85, b: 0.75 },  // summit
+        { t: 0.00, r: 0.20, g: 0.45, b: 0.15 },  // dark green (shore)
+        { t: 0.20, r: 0.30, g: 0.55, b: 0.20 },  // medium green (lowland)
+        { t: 0.40, r: 0.55, g: 0.58, b: 0.28 },  // olive/dry grass
+        { t: 0.60, r: 0.72, g: 0.58, b: 0.35 },  // tan/brown (highland)
+        { t: 0.80, r: 0.82, g: 0.72, b: 0.55 },  // light brown/sandy
+        { t: 1.00, r: 0.97, g: 0.95, b: 0.92 },  // white/snow summit
     ];
     h = Math.max(0, Math.min(1, h));
     for (let i = 0; i < stops.length - 1; i++) {
@@ -573,25 +573,32 @@ function addGridMarkers(scene, terrainSize) {
 }
 
 function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale, gridN) {
-    const half = terrainSize / 2;
     for (const t of topics) {
-        if (t.height < 0.03) continue;
         const gx = t.gridPos ? t.gridPos.gx : Math.floor(gridN / 2);
         const gy = t.gridPos ? t.gridPos.gy : Math.floor(gridN / 2);
         const worldX = (gx / gridN - 0.5) * terrainSize;
         const worldZ = -(gy / gridN - 0.5) * terrainSize;
-        const h = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
-        const worldY = h * heightScale + 1.5;
+        const rawH = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
+        const terrainY = rawH < 0.001 ? 0.3 : rawH * heightScale + 0.8;
 
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
         canvas.width = 512; canvas.height = 72;
-        const fontSize = t.height > 0.6 ? 28 : t.height > 0.3 ? 22 : 16;
+
+        let fontSize, spriteScale, bgAlpha;
+        if (t.height > 0.5) {
+            fontSize = 30; spriteScale = 9; bgAlpha = 0.9;
+        } else if (t.height > 0.15) {
+            fontSize = 22; spriteScale = 6.5; bgAlpha = 0.8;
+        } else {
+            fontSize = 15; spriteScale = 4.5; bgAlpha = 0.65;
+        }
+
         ctx.font = `bold ${fontSize}px 'DM Sans', sans-serif`;
         const tm = ctx.measureText(t.label);
         const bgW = Math.min(500, tm.width + 24);
         const bgX = 256 - bgW / 2;
-        ctx.fillStyle = 'rgba(255,255,250,0.85)';
+        ctx.fillStyle = `rgba(255,255,250,${bgAlpha})`;
         ctx.beginPath();
         ctx.roundRect(bgX, 10, bgW, fontSize + 16, 8);
         ctx.fill();
@@ -602,8 +609,7 @@ function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale
 
         const tex = new THREE.CanvasTexture(canvas);
         const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-        sprite.position.set(worldX, worldY, worldZ);
-        const spriteScale = t.height > 0.6 ? 8 : t.height > 0.3 ? 6 : 4.5;
+        sprite.position.set(worldX, terrainY, worldZ);
         sprite.scale.set(spriteScale, spriteScale * 72 / 512, 1);
         scene.add(sprite);
     }
@@ -615,7 +621,7 @@ function init3D() {
   scene.background = new THREE.Color(0x87CEEB);
   scene.fog = new THREE.FogExp2(0x87CEEB, 0.012);
   const camera = new THREE.PerspectiveCamera(45, W/H, 0.1, 1000);
-  camera.position.set(0, 28, 18);
+  camera.position.set(0, 35, 22);
   camera.lookAt(0,0,0);
   const renderer = new THREE.WebGLRenderer({antialias:true});
   renderer.setSize(W,H);
@@ -628,7 +634,7 @@ function init3D() {
   const fill = new THREE.DirectionalLight(0x8EC8E8, 0.25); fill.position.set(-8, 10, -10); scene.add(fill);
 
   const terrainSize = 30;
-  const heightScale = 5;
+  const heightScale = 10;
 
   if (HEIGHTMAP && HEIGHTMAP.heightmap) {
     // ── Server heightmap path ──────────────────────────────────────
@@ -644,8 +650,8 @@ function init3D() {
         const ix = i % gridN;
         const iy = Math.floor(i / gridN);
         const h = HEIGHTMAP.heightmap[iy][ix];
-        verts.setY(i, h * heightScale);
-        const col = terrainColorSmooth(h);
+        verts.setY(i, h < 0.001 ? -0.15 : h * heightScale);
+        const col = h < 0.001 ? {r:0.12, g:0.25, b:0.35} : terrainColorSmooth(h);
         colors[i * 3] = col.r;
         colors[i * 3 + 1] = col.g;
         colors[i * 3 + 2] = col.b;
@@ -664,11 +670,10 @@ function init3D() {
     const oceanGeo = new THREE.PlaneGeometry(120, 120);
     oceanGeo.rotateX(-Math.PI / 2);
     scene.add(new THREE.Mesh(oceanGeo, new THREE.MeshPhongMaterial({
-        color: 0x5B8FA8, shininess: 15, transparent: true, opacity: 0.92, specular: 0x222233
+        color: 0x1a5276, shininess: 30, transparent: true, opacity: 0.88, specular: 0x334455
     })));
 
-    // Grid markers and labels
-    addGridMarkers(scene, terrainSize);
+    // Labels (no grid markers)
     addTerrainLabels(scene, TOPICS, HEIGHTMAP, terrainSize, heightScale, gridN);
 
   } else {
@@ -718,7 +723,7 @@ function init3D() {
     const oceanGeo = new THREE.PlaneGeometry(120, 120);
     oceanGeo.rotateX(-Math.PI / 2);
     scene.add(new THREE.Mesh(oceanGeo, new THREE.MeshPhongMaterial({
-        color: 0x5B8FA8, shininess: 15, transparent: true, opacity: 0.92, specular: 0x222233
+        color: 0x1a5276, shininess: 30, transparent: true, opacity: 0.88, specular: 0x334455
     })));
 
     // Labels (fallback)
@@ -737,7 +742,6 @@ function init3D() {
       sp.position.set(sx, t.height*fallbackHeightScale+2, sz); sp.scale.set(7,1,1); scene.add(sp);
     }
 
-    addGridMarkers(scene, terrainSize);
   }
 
   return {scene, camera, renderer};
@@ -746,7 +750,7 @@ function init3D() {
 // ═══════════════════════════════════════════════════════════════════════
 // 3D CONTROLS — orbit + fly
 // ═══════════════════════════════════════════════════════════════════════
-let orbit = {drag:false, lx:0, ly:0, theta:.3, phi:.55, dist:34};
+let orbit = {drag:false, lx:0, ly:0, theta:.3, phi:.55, dist:42};
 function updateOrbit(cam) { cam.position.x=orbit.dist*Math.sin(orbit.phi)*Math.sin(orbit.theta); cam.position.y=orbit.dist*Math.cos(orbit.phi); cam.position.z=orbit.dist*Math.sin(orbit.phi)*Math.cos(orbit.theta); cam.lookAt(0,0,0); }
 function attachOrbit(cam, el) {
   updateOrbit(cam);
@@ -808,7 +812,7 @@ function renderCurrent(){
   // 3D or fly — both use Three.js terrain
   const c3=document.getElementById('container3d');c3.style.display='block';c3.innerHTML='';
   const{scene,camera,renderer}=init3D(); attachOrbit(camera,renderer.domElement); attachFly(camera,renderer.domElement);
-  if(currentMode==='3d'){orbit={drag:false,lx:0,ly:0,theta:.3,phi:.55,dist:34};updateOrbit(camera)}
+  if(currentMode==='3d'){orbit={drag:false,lx:0,ly:0,theta:.3,phi:.55,dist:42};updateOrbit(camera)}
   else{camera.position.set(-12,6,18);camera.rotation.order='YXZ';camera.lookAt(0,3,0)}
   c3.focus();
   function anim(){animFrame=requestAnimationFrame(anim);tickFly(camera);renderer.render(scene,camera)}anim();

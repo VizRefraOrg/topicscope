@@ -163,11 +163,15 @@ def generate_heightmap(coords_2d, saliences, heights, grid_size=200):
     peaked = gaussian_filter(grid, sigma=peak_sigma)
     blended = 0.65 * broad + 0.35 * peaked
 
-    # FIX 3: No sea level subtraction — just normalize + gamma
+    # Normalize, sharper gamma, then sea-level cutoff for ocean visibility
     bmax = blended.max()
     if bmax > 1e-9:
         blended = blended / bmax
-    blended = np.power(blended, 0.7)
+    blended = np.power(blended, 0.5)
+
+    # Sea level cutoff: push low-density areas to zero (exposes ocean)
+    sea_cutoff = 0.15
+    blended = np.where(blended < sea_cutoff, 0.0, (blended - sea_cutoff) / (1.0 - sea_cutoff))
 
     bounds = {
         "x_min": float(margin),
