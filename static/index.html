@@ -710,11 +710,11 @@ function init3D() {
     terrainMesh.receiveShadow = true;
     scene.add(terrainMesh);
 
-    // Flat ground plane (light grey, receives shadows)
+    // Ocean plane (blue, receives shadows)
     const groundGeo = new THREE.PlaneGeometry(120, 120);
     groundGeo.rotateX(-Math.PI / 2);
     const groundMesh = new THREE.Mesh(groundGeo, new THREE.MeshPhongMaterial({
-        color: 0xE8E8E8, shininess: 5, specular: 0x111111
+        color: 0x3a7ca5, shininess: 60, specular: 0x4488aa, transparent: true, opacity: 0.9
     }));
     groundMesh.position.y = -0.1;
     groundMesh.receiveShadow = true;
@@ -799,10 +799,10 @@ function init3D() {
         side: THREE.DoubleSide, flatShading: false
     })));
 
-    // Ground plane (fallback)
+    // Ocean plane (fallback)
     const groundGeo2 = new THREE.PlaneGeometry(120, 120);
     groundGeo2.rotateX(-Math.PI / 2);
-    const gm2 = new THREE.Mesh(groundGeo2, new THREE.MeshPhongMaterial({ color: 0xE8E8E8, shininess: 5 }));
+    const gm2 = new THREE.Mesh(groundGeo2, new THREE.MeshPhongMaterial({ color: 0x3a7ca5, shininess: 60, specular: 0x4488aa, transparent: true, opacity: 0.9 }));
     gm2.position.y = -0.1;
     scene.add(gm2);
 
