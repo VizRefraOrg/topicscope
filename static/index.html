@@ -733,15 +733,15 @@ function init3D() {
                 // Check horizontal edge
                 if ((h00 < level) !== (h10 < level)) {
                     const t = (level - h00) / (h10 - h00);
-                    const wx = ((ix + t) / gridN - 0.5) * terrainSize;
-                    const wz = -(iy / gridN - 0.5) * terrainSize;
+                    const wx = ((ix + t) / (gridN - 1) - 0.5) * terrainSize;
+                    const wz = (iy / (gridN - 1) - 0.5) * terrainSize;
                     contourPts.push(new THREE.Vector3(wx, level * heightScale + 0.05, wz));
                 }
                 // Check vertical edge
                 if ((h00 < level) !== (h01 < level)) {
                     const t = (level - h00) / (h01 - h00);
-                    const wx = (ix / gridN - 0.5) * terrainSize;
-                    const wz = -((iy + t) / gridN - 0.5) * terrainSize;
+                    const wx = (ix / (gridN - 1) - 0.5) * terrainSize;
+                    const wz = ((iy + t) / (gridN - 1) - 0.5) * terrainSize;
                     contourPts.push(new THREE.Vector3(wx, level * heightScale + 0.05, wz));
                 }
             }
