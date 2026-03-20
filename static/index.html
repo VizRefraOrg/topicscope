@@ -529,15 +529,16 @@ function renderForceGraph() {
 // No organic noise, no half-ellipse, clean mathematical surface
 // ═══════════════════════════════════════════════════════════════════════
 function terrainColorSmooth(h) {
-    // Green base → white/silver peaks (matching Gemini reference)
+    // Green → olive → tan/brown → white (matching ideal 3D scape reference)
     const stops = [
-        { t: 0.00, r: 0.35, g: 0.58, b: 0.28 },  // green (shore)
-        { t: 0.20, r: 0.40, g: 0.62, b: 0.32 },  // medium green
-        { t: 0.40, r: 0.50, g: 0.65, b: 0.40 },  // light green
-        { t: 0.55, r: 0.62, g: 0.68, b: 0.52 },  // grey-green
-        { t: 0.70, r: 0.75, g: 0.76, b: 0.68 },  // light grey-green
-        { t: 0.85, r: 0.88, g: 0.88, b: 0.84 },  // silver/light grey
-        { t: 1.00, r: 0.97, g: 0.97, b: 0.95 },  // white summit
+        { t: 0.00, r: 0.28, g: 0.52, b: 0.22 },  // dark green (shore)
+        { t: 0.15, r: 0.35, g: 0.58, b: 0.25 },  // medium green (lowland)
+        { t: 0.30, r: 0.45, g: 0.56, b: 0.28 },  // olive green (foothills)
+        { t: 0.45, r: 0.58, g: 0.55, b: 0.32 },  // olive-tan
+        { t: 0.60, r: 0.70, g: 0.58, b: 0.38 },  // tan (highland)
+        { t: 0.75, r: 0.80, g: 0.68, b: 0.50 },  // light brown
+        { t: 0.88, r: 0.90, g: 0.82, b: 0.68 },  // sandy
+        { t: 1.00, r: 0.97, g: 0.95, b: 0.90 },  // white/cream summit
     ];
     h = Math.max(0, Math.min(1, h));
     for (let i = 0; i < stops.length - 1; i++) {
@@ -555,11 +556,13 @@ function terrainColorSmooth(h) {
 
 function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale, gridN, allEntityPositions) {
     // Render main topic labels (larger, on peaks)
+    // Use raw API x,y coords mapped to terrain space (same as vertex mapping)
     for (const t of topics) {
         const gx = t.gridPos ? t.gridPos.gx : Math.floor(gridN / 2);
         const gy = t.gridPos ? t.gridPos.gy : Math.floor(gridN / 2);
-        const worldX = (gx / gridN - 0.5) * terrainSize;
-        const worldZ = -(gy / gridN - 0.5) * terrainSize;
+        // Match PlaneGeometry vertex layout: X = (ix/(gridN-1) - 0.5) * size
+        const worldX = (gx / (gridN - 1) - 0.5) * terrainSize;
+        const worldZ = -(gy / (gridN - 1) - 0.5) * terrainSize;
         const rawH = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
         const terrainY = rawH < 0.001 ? 0.3 : rawH * heightScale + 0.8;
 
@@ -606,8 +609,8 @@ function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale
         const gx = ent.grid_gx;
         const gy = ent.grid_gy;
         if (gx < 0 || gy < 0 || gy >= heightmapData.heightmap.length || gx >= heightmapData.heightmap[0].length) continue;
-        const worldX = (gx / gridN - 0.5) * terrainSize;
-        const worldZ = -(gy / gridN - 0.5) * terrainSize;
+        const worldX = (gx / (gridN - 1) - 0.5) * terrainSize;
+        const worldZ = -(gy / (gridN - 1) - 0.5) * terrainSize;
         const rawH = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
         const terrainY = rawH < 0.001 ? 0.2 : rawH * heightScale + 0.4;
 
@@ -685,11 +688,11 @@ function init3D() {
         const iy = Math.floor(i / gridN);
         const h = HEIGHTMAP.heightmap[iy][ix];
         if (h < 0.01) {
-            // Flat ground — match background
-            verts.setY(i, -0.05);
-            colors[i * 3]     = 0.91;
-            colors[i * 3 + 1] = 0.91;
-            colors[i * 3 + 2] = 0.91;
+            // Flat at ocean level — closes island sides against the water
+            verts.setY(i, 0);
+            colors[i * 3]     = 0.22;
+            colors[i * 3 + 1] = 0.48;
+            colors[i * 3 + 2] = 0.65;
         } else {
             verts.setY(i, h * heightScale);
             const col = terrainColorSmooth(h);
@@ -716,7 +719,7 @@ function init3D() {
     const groundMesh = new THREE.Mesh(groundGeo, new THREE.MeshPhongMaterial({
         color: 0x3a7ca5, shininess: 60, specular: 0x4488aa, transparent: true, opacity: 0.9
     }));
-    groundMesh.position.y = -0.1;
+    groundMesh.position.y = -0.02;
     groundMesh.receiveShadow = true;
     scene.add(groundMesh);
 
