@@ -704,9 +704,8 @@ function init3D() {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
 
-    const terrainMesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
-        vertexColors: true, shininess: 20, specular: 0x333333,
-        side: THREE.DoubleSide, flatShading: false
+    const terrainMesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
+        vertexColors: true, side: THREE.DoubleSide
     }));
     terrainMesh.castShadow = true;
     terrainMesh.receiveShadow = true;
