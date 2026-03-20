@@ -556,13 +556,12 @@ function terrainColorSmooth(h) {
 
 function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale, gridN, allEntityPositions) {
     // Render main topic labels (larger, on peaks)
-    // Use raw API x,y coords mapped to terrain space (same as vertex mapping)
     for (const t of topics) {
         const gx = t.gridPos ? t.gridPos.gx : Math.floor(gridN / 2);
         const gy = t.gridPos ? t.gridPos.gy : Math.floor(gridN / 2);
-        // Match PlaneGeometry vertex layout: X = (ix/(gridN-1) - 0.5) * size
+        // PlaneGeometry vertex order: ix varies along X, iy varies along -Z
         const worldX = (gx / (gridN - 1) - 0.5) * terrainSize;
-        const worldZ = -(gy / (gridN - 1) - 0.5) * terrainSize;
+        const worldZ = (gy / (gridN - 1) - 0.5) * terrainSize;
         const rawH = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
         const terrainY = rawH < 0.001 ? 0.3 : rawH * heightScale + 0.8;
 
@@ -610,7 +609,7 @@ function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale
         const gy = ent.grid_gy;
         if (gx < 0 || gy < 0 || gy >= heightmapData.heightmap.length || gx >= heightmapData.heightmap[0].length) continue;
         const worldX = (gx / (gridN - 1) - 0.5) * terrainSize;
-        const worldZ = -(gy / (gridN - 1) - 0.5) * terrainSize;
+        const worldZ = (gy / (gridN - 1) - 0.5) * terrainSize;
         const rawH = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
         const terrainY = rawH < 0.001 ? 0.2 : rawH * heightScale + 0.4;
 
