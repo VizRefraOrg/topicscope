@@ -111,10 +111,12 @@ def cluster_entities(coords_2d, n_entities):
 
 
 def generate_heightmap(coords_2d, saliences, heights, grid_size=200):
-    """Generate a Gaussian terrain heightmap from entity positions and weights."""
-    from scipy.spatial.distance import cdist
-    N = len(coords_2d)
+    """Generate terrain heightmap: individual Gaussian bumps per entity.
 
+    Simple approach: each entity stamps its own Gaussian hill. Nearby entities
+    in the same cluster merge naturally. Distant clusters stay as separate islands.
+    """
+    N = len(coords_2d)
     margin = int(grid_size * 0.10)
 
     # Normalize coords to [margin, grid_size - margin]
@@ -127,96 +129,57 @@ def generate_heightmap(coords_2d, saliences, heights, grid_size=200):
         else:
             coords[:, dim] = margin + (coords[:, dim] - cmin) / span * (grid_size - 2 * margin)
 
-    # FIX 2: Log weight compression + high floor (0.40)
-    # Prevents one entity from creating a 40:1 spike
+    # Weights: sqrt compression, normalized, with floor
     raw_weights = np.array(saliences) * np.array(heights)
     raw_weights = np.clip(raw_weights, 1e-6, None)
-    weights = np.log1p(raw_weights)  # log(1+x) compresses more than sqrt
+    weights = np.sqrt(raw_weights)
     w_max = weights.max()
     if w_max > 1e-9:
         weights = weights / w_max
-    weights = np.clip(weights, 0.40, 1.0)
+    weights = np.clip(weights, 0.25, 1.0)
 
-    # Place weighted points on grid (SUM accumulation)
+    # Stamp individual Gaussian bumps per entity (NOT a single blur pass)
     grid = np.zeros((grid_size, grid_size), dtype=float)
     entity_grid_positions = []
+    base_radius = 8  # cells — small enough for distinct bumps
+
     for i in range(N):
         gx = int(np.clip(coords[i, 0], 0, grid_size - 1))
         gy = int(np.clip(coords[i, 1], 0, grid_size - 1))
-        grid[gy, gx] += weights[i]
         entity_grid_positions.append({"gx": gx, "gy": gy})
 
-    # Adaptive sigma — tighter cap to create distinct islands
-    if N >= 2:
-        dists = cdist(coords, coords)
-        np.fill_diagonal(dists, np.inf)
-        nearest_dists = dists.min(axis=1)
-        median_nn = np.median(nearest_dists)
-        sigma = max(median_nn * 0.9, grid_size * 0.04)
-        sigma = min(sigma, grid_size * 0.12)
-    else:
-        sigma = grid_size * 0.08
+        # Each entity gets its own Gaussian bump
+        r = base_radius + weights[i] * 6  # radius 8-14 cells
+        h = weights[i]  # height proportional to weight
+        r_int = int(np.ceil(r * 2.5))
 
-    # Peaked-dominant blend (40/60) — more elevation contrast between peaks
-    broad = gaussian_filter(grid, sigma=sigma)
-    peak_sigma = max(sigma * 0.35, 4.0)
-    peaked = gaussian_filter(grid, sigma=peak_sigma)
-    blended = 0.40 * broad + 0.60 * peaked
+        for dy in range(-r_int, r_int + 1):
+            for dx in range(-r_int, r_int + 1):
+                px, py = gx + dx, gy + dy
+                if 0 <= px < grid_size and 0 <= py < grid_size:
+                    dist_sq = dx * dx + dy * dy
+                    val = h * np.exp(-dist_sq / (2 * r * r))
+                    grid[py, px] = max(grid[py, px], val)  # MAX so bumps don't over-stack
 
-    # Percentile normalization: use 98th percentile as ceiling
-    # Prevents one spike from compressing all other terrain into green zone
-    land_vals = blended[blended > 1e-9]
-    if len(land_vals) > 10:
-        p98 = np.percentile(land_vals, 98)
-        if p98 > 1e-9:
-            blended = blended / p98
-            blended = np.clip(blended, 0.0, 1.0)
-    else:
-        bmax = blended.max()
-        if bmax > 1e-9:
-            blended = blended / bmax
+    # Light smoothing pass to remove grid artifacts
+    grid = gaussian_filter(grid, sigma=2.0)
 
-    # Island mask: tighter radius (1.6x) to carve ocean between clusters
-    island_radius = sigma * 1.6
-    yy, xx = np.mgrid[0:grid_size, 0:grid_size]
-    mask = np.zeros((grid_size, grid_size), dtype=bool)
-    for i in range(N):
-        gx = int(np.clip(coords[i, 0], 0, grid_size - 1))
-        gy = int(np.clip(coords[i, 1], 0, grid_size - 1))
-        dist_sq = (xx - gx) ** 2 + (yy - gy) ** 2
-        mask |= (dist_sq < island_radius ** 2)
-    blended[~mask] = 0.0
+    # Simple normalize to [0, 1]
+    gmax = grid.max()
+    if gmax > 1e-9:
+        grid = grid / gmax
 
-    # Gamma 0.55: stronger lift to push mid-values into tan/brown color bands
-    blended = np.power(blended, 0.55)
-
-    # Higher sea cutoff carves sharper shores and wider ocean channels
-    sea_cutoff = 0.15
-    blended = np.where(blended < sea_cutoff, 0.0, (blended - sea_cutoff) / (1.0 - sea_cutoff))
-
-    # Histogram equalization on land: spreads values across full 0-1 range
-    # so ALL color stops (green -> olive -> tan -> brown -> white) are used
-    land_mask_final = blended > 0.001
-    land_vals_final = blended[land_mask_final]
-    if len(land_vals_final) > 50:
-        sorted_vals = np.sort(land_vals_final)
-        ranks = np.searchsorted(sorted_vals, blended[land_mask_final], side='right')
-        equalized = ranks.astype(float) / len(sorted_vals)
-        # Blend 55% equalized + 45% original to keep natural terrain shape
-        blended[land_mask_final] = 0.55 * equalized + 0.45 * blended[land_mask_final]
-
-    bounds = {
-        "x_min": float(margin),
-        "x_max": float(grid_size - margin),
-        "y_min": float(margin),
-        "y_max": float(grid_size - margin),
-    }
+    # Mild sea level: push very low values to zero for clean edges
+    grid = np.where(grid < 0.03, 0.0, grid)
 
     return {
-        "heightmap": [[round(v, 4) for v in row] for row in blended.tolist()],
+        "heightmap": [[round(v, 4) for v in row] for row in grid.tolist()],
         "grid_size": grid_size,
         "sea_level": 0.0,
-        "bounds": bounds,
+        "bounds": {
+            "x_min": float(margin), "x_max": float(grid_size - margin),
+            "y_min": float(margin), "y_max": float(grid_size - margin),
+        },
         "entity_grid_positions": entity_grid_positions,
     }
 

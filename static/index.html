@@ -529,17 +529,15 @@ function renderForceGraph() {
 // No organic noise, no half-ellipse, clean mathematical surface
 // ═══════════════════════════════════════════════════════════════════════
 function terrainColorSmooth(h) {
-    // Topographic island color ramp: green shores -> olive -> tan -> brown -> snow
-    // Designed to match classic topographic map elevation bands
+    // Green base → white/silver peaks (matching Gemini reference)
     const stops = [
-        { t: 0.00, r: 0.18, g: 0.48, b: 0.14 },  // deep green (shoreline)
-        { t: 0.15, r: 0.32, g: 0.56, b: 0.20 },  // medium green (lowland)
-        { t: 0.30, r: 0.50, g: 0.56, b: 0.25 },  // olive-green (foothills)
-        { t: 0.45, r: 0.65, g: 0.55, b: 0.30 },  // olive-tan (mid elevation)
-        { t: 0.60, r: 0.76, g: 0.62, b: 0.38 },  // tan (highland)
-        { t: 0.75, r: 0.84, g: 0.74, b: 0.52 },  // light tan/sandy
-        { t: 0.88, r: 0.90, g: 0.85, b: 0.72 },  // pale sandy-brown
-        { t: 1.00, r: 0.97, g: 0.95, b: 0.92 },  // snow/summit white
+        { t: 0.00, r: 0.35, g: 0.58, b: 0.28 },  // green (shore)
+        { t: 0.20, r: 0.40, g: 0.62, b: 0.32 },  // medium green
+        { t: 0.40, r: 0.50, g: 0.65, b: 0.40 },  // light green
+        { t: 0.55, r: 0.62, g: 0.68, b: 0.52 },  // grey-green
+        { t: 0.70, r: 0.75, g: 0.76, b: 0.68 },  // light grey-green
+        { t: 0.85, r: 0.88, g: 0.88, b: 0.84 },  // silver/light grey
+        { t: 1.00, r: 0.97, g: 0.97, b: 0.95 },  // white summit
     ];
     h = Math.max(0, Math.min(1, h));
     for (let i = 0; i < stops.length - 1; i++) {
@@ -643,26 +641,36 @@ function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale
 function init3D() {
   const c = document.getElementById('container3d'), W = c.clientWidth, H = c.clientHeight;
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x87CEEB);
-  scene.fog = new THREE.FogExp2(0x87CEEB, 0.012);
+  scene.background = new THREE.Color(0xF0F0F0);
   const camera = new THREE.PerspectiveCamera(45, W/H, 0.1, 1000);
-  camera.position.set(0, 35, 22);
+  camera.position.set(0, 38, 14);
   camera.lookAt(0,0,0);
   const renderer = new THREE.WebGLRenderer({antialias:true});
   renderer.setSize(W,H);
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));
   c.appendChild(renderer.domElement);
 
-  // Lighting
-  scene.add(new THREE.AmbientLight(0xB0C4DE, 0.5));
-  const sun = new THREE.DirectionalLight(0xFFF8E7, 1.0); sun.position.set(10, 20, 8); scene.add(sun);
-  const fill = new THREE.DirectionalLight(0x8EC8E8, 0.25); fill.position.set(-8, 10, -10); scene.add(fill);
+  // Lighting — bright, even, for clean paper-map look
+  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+  sun.position.set(8, 25, 5);
+  sun.castShadow = true;
+  sun.shadow.mapSize.width = 1024;
+  sun.shadow.mapSize.height = 1024;
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 60;
+  sun.shadow.camera.left = -20;
+  sun.shadow.camera.right = 20;
+  sun.shadow.camera.top = 20;
+  sun.shadow.camera.bottom = -20;
+  scene.add(sun);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const terrainSize = 30;
-  const heightScale = 10;
+  const heightScale = 8;
 
   if (HEIGHTMAP && HEIGHTMAP.heightmap) {
-    // ── Server heightmap path ──────────────────────────────────────
     const gridN = HEIGHTMAP.grid_size;
 
     const geo = new THREE.PlaneGeometry(terrainSize, terrainSize, gridN - 1, gridN - 1);
@@ -671,42 +679,20 @@ function init3D() {
     const verts = geo.attributes.position;
     const colors = new Float32Array(verts.count * 3);
 
-    // Compute land-only min/max and percentile-based contrast stretching
-    let hLandMin = Infinity, hLandMax = -Infinity;
-    const landValues = [];
-    for (let iy = 0; iy < gridN; iy++) {
-        for (let ix = 0; ix < gridN; ix++) {
-            const h = HEIGHTMAP.heightmap[iy][ix];
-            if (h > 0.001) {
-                landValues.push(h);
-                if (h < hLandMin) hLandMin = h;
-                if (h > hLandMax) hLandMax = h;
-            }
-        }
-    }
-    // Percentile-based stretch: use 2nd and 98th percentile as range
-    landValues.sort((a, b) => a - b);
-    const pLow = landValues[Math.floor(landValues.length * 0.02)] || hLandMin;
-    const pHigh = landValues[Math.floor(landValues.length * 0.98)] || hLandMax;
-    const pRange = (pHigh - pLow) > 0.001 ? (pHigh - pLow) : 1;
-
+    // Simple: use heightmap values directly for color (already 0-1 from backend)
     for (let i = 0; i < verts.count; i++) {
         const ix = i % gridN;
         const iy = Math.floor(i / gridN);
         const h = HEIGHTMAP.heightmap[iy][ix];
-        if (h < 0.001) {
-            // Ocean: push well below water plane
-            verts.setY(i, -0.3);
-            colors[i * 3]     = 0.08;
-            colors[i * 3 + 1] = 0.18;
-            colors[i * 3 + 2] = 0.30;
+        if (h < 0.01) {
+            // Flat ground — match background
+            verts.setY(i, -0.05);
+            colors[i * 3]     = 0.91;
+            colors[i * 3 + 1] = 0.91;
+            colors[i * 3 + 2] = 0.91;
         } else {
-            // Land: percentile stretch with mild power curve
-            // Backend already does histogram equalization, so keep frontend gentle
-            let hStretched = Math.max(0, Math.min(1, (h - pLow) / pRange));
-            hStretched = Math.pow(hStretched, 0.7);
             verts.setY(i, h * heightScale);
-            const col = terrainColorSmooth(hStretched);
+            const col = terrainColorSmooth(h);
             colors[i * 3]     = col.r;
             colors[i * 3 + 1] = col.g;
             colors[i * 3 + 2] = col.b;
@@ -716,20 +702,58 @@ function init3D() {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
 
-    const mesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
-        vertexColors: true, shininess: 8, specular: 0x111111,
+    const terrainMesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
+        vertexColors: true, shininess: 20, specular: 0x333333,
         side: THREE.DoubleSide, flatShading: false
     }));
-    scene.add(mesh);
+    terrainMesh.castShadow = true;
+    terrainMesh.receiveShadow = true;
+    scene.add(terrainMesh);
 
-    // Ocean
-    const oceanGeo = new THREE.PlaneGeometry(120, 120);
-    oceanGeo.rotateX(-Math.PI / 2);
-    scene.add(new THREE.Mesh(oceanGeo, new THREE.MeshPhongMaterial({
-        color: 0x1a5276, shininess: 30, transparent: true, opacity: 0.88, specular: 0x334455
-    })));
+    // Flat ground plane (light grey, receives shadows)
+    const groundGeo = new THREE.PlaneGeometry(120, 120);
+    groundGeo.rotateX(-Math.PI / 2);
+    const groundMesh = new THREE.Mesh(groundGeo, new THREE.MeshPhongMaterial({
+        color: 0xE8E8E8, shininess: 5, specular: 0x111111
+    }));
+    groundMesh.position.y = -0.1;
+    groundMesh.receiveShadow = true;
+    scene.add(groundMesh);
 
-    // Labels (no grid markers)
+    // Contour lines at elevation intervals
+    const contourLevels = [0.15, 0.30, 0.45, 0.60, 0.75, 0.90];
+    for (const level of contourLevels) {
+        const contourPts = [];
+        for (let iy = 0; iy < gridN - 1; iy++) {
+            for (let ix = 0; ix < gridN - 1; ix++) {
+                const h00 = HEIGHTMAP.heightmap[iy][ix];
+                const h10 = HEIGHTMAP.heightmap[iy][ix + 1];
+                const h01 = HEIGHTMAP.heightmap[iy + 1][ix];
+                // Check horizontal edge
+                if ((h00 < level) !== (h10 < level)) {
+                    const t = (level - h00) / (h10 - h00);
+                    const wx = ((ix + t) / gridN - 0.5) * terrainSize;
+                    const wz = -(iy / gridN - 0.5) * terrainSize;
+                    contourPts.push(new THREE.Vector3(wx, level * heightScale + 0.05, wz));
+                }
+                // Check vertical edge
+                if ((h00 < level) !== (h01 < level)) {
+                    const t = (level - h00) / (h01 - h00);
+                    const wx = (ix / gridN - 0.5) * terrainSize;
+                    const wz = -((iy + t) / gridN - 0.5) * terrainSize;
+                    contourPts.push(new THREE.Vector3(wx, level * heightScale + 0.05, wz));
+                }
+            }
+        }
+        if (contourPts.length > 1) {
+            const contourGeo = new THREE.BufferGeometry().setFromPoints(contourPts);
+            scene.add(new THREE.Points(contourGeo, new THREE.PointsMaterial({
+                color: 0xffffff, size: 0.08, transparent: true, opacity: 0.5
+            })));
+        }
+    }
+
+    // Labels
     addTerrainLabels(scene, TOPICS, HEIGHTMAP, terrainSize, heightScale, gridN, ALL_ENTITY_POSITIONS);
 
   } else {
@@ -775,12 +799,12 @@ function init3D() {
         side: THREE.DoubleSide, flatShading: false
     })));
 
-    // Ocean
-    const oceanGeo = new THREE.PlaneGeometry(120, 120);
-    oceanGeo.rotateX(-Math.PI / 2);
-    scene.add(new THREE.Mesh(oceanGeo, new THREE.MeshPhongMaterial({
-        color: 0x1a5276, shininess: 30, transparent: true, opacity: 0.88, specular: 0x334455
-    })));
+    // Ground plane (fallback)
+    const groundGeo2 = new THREE.PlaneGeometry(120, 120);
+    groundGeo2.rotateX(-Math.PI / 2);
+    const gm2 = new THREE.Mesh(groundGeo2, new THREE.MeshPhongMaterial({ color: 0xE8E8E8, shininess: 5 }));
+    gm2.position.y = -0.1;
+    scene.add(gm2);
 
     // Labels (fallback)
     for (const t of TOPICS) {
@@ -806,7 +830,7 @@ function init3D() {
 // ═══════════════════════════════════════════════════════════════════════
 // 3D CONTROLS — orbit + fly
 // ═══════════════════════════════════════════════════════════════════════
-let orbit = {drag:false, lx:0, ly:0, theta:.3, phi:.55, dist:42};
+let orbit = {drag:false, lx:0, ly:0, theta:.3, phi:.35, dist:40};
 function updateOrbit(cam) { cam.position.x=orbit.dist*Math.sin(orbit.phi)*Math.sin(orbit.theta); cam.position.y=orbit.dist*Math.cos(orbit.phi); cam.position.z=orbit.dist*Math.sin(orbit.phi)*Math.cos(orbit.theta); cam.lookAt(0,0,0); }
 function attachOrbit(cam, el) {
   updateOrbit(cam);
@@ -868,7 +892,7 @@ function renderCurrent(){
   // 3D or fly — both use Three.js terrain
   const c3=document.getElementById('container3d');c3.style.display='block';c3.innerHTML='';
   const{scene,camera,renderer}=init3D(); attachOrbit(camera,renderer.domElement); attachFly(camera,renderer.domElement);
-  if(currentMode==='3d'){orbit={drag:false,lx:0,ly:0,theta:.3,phi:.55,dist:42};updateOrbit(camera)}
+  if(currentMode==='3d'){orbit={drag:false,lx:0,ly:0,theta:.3,phi:.35,dist:40};updateOrbit(camera)}
   else{camera.position.set(-12,6,18);camera.rotation.order='YXZ';camera.lookAt(0,3,0)}
   c3.focus();
   function anim(){animFrame=requestAnimationFrame(anim);tickFly(camera);renderer.render(scene,camera)}anim();
