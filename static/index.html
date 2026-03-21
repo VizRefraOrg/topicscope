@@ -3,7 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TopicScope — Textual Data Visualization</title>
+<title>TopicScope by VizRefra — AI Text Visualization & Topic Terrain Mapping</title>
+<meta name="description" content="TopicScope transforms unstructured text into interactive 3D terrain maps, 2D scatter plots, and force-directed graphs. Discover topics, entities, and relationships through geographic-style visualization powered by NLP and AI embeddings.">
+<meta name="keywords" content="text visualization, topic modeling, NLP, named entity recognition, 3D terrain, data visualization, text analysis, AI, VizRefra, TopicScope">
+<meta name="author" content="VizRefra">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://topicscope-api-e8byhqarhtd7csgg.australiacentral-01.azurewebsites.net/">
+<meta property="og:title" content="TopicScope — AI-Powered Text Visualization">
+<meta property="og:description" content="Transform text into interactive 3D terrain maps and topic landscapes. Powered by NLP, embeddings, and geographic-style visualization.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://topicscope-api-e8byhqarhtd7csgg.australiacentral-01.azurewebsites.net/">
+<meta property="og:site_name" content="TopicScope by VizRefra">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="TopicScope — AI Text Visualization">
+<meta name="twitter:description" content="Transform unstructured text into 3D terrain maps, scatter plots, and force graphs.">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebApplication","name":"TopicScope","description":"AI-powered text visualization tool that transforms unstructured text into interactive 3D terrain maps, 2D scatter plots, and force-directed graphs for topic discovery and entity analysis.","url":"https://topicscope-api-e8byhqarhtd7csgg.australiacentral-01.azurewebsites.net/","applicationCategory":"AnalyticsApplication","operatingSystem":"Web","creator":{"@type":"Organization","name":"VizRefra","url":"https://vizrefra.com"},"offers":{"@type":"Offer","price":"0","priceCurrency":"AUD"},"featureList":["3D Terrain Topic Visualization","2D Scatter Plot with Contour Density","Force-Directed Graph with Fisheye","Named Entity Recognition","AI-Powered Topic Discovery","File Upload (PDF, DOCX, TXT)"]}
+</script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -25,7 +41,7 @@ body{font-family:'DM Sans',sans-serif;background:#ffffff;color:#333333;overflow:
 .panel-header{padding:16px 18px 12px;border-bottom:1px solid #e0e0e0}
 .panel-header h2{font-size:14px;font-weight:700;margin-bottom:10px}
 .tabs{display:flex;gap:2px;background:#f0f0f0;border-radius:6px;padding:2px}
-.tabs button{flex:1;padding:7px;border:none;border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;background:transparent;color:rgba(180,170,220,0.5);transition:all 0.2s}
+.tabs button{flex:1;padding:7px;border:none;border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;background:transparent;color:#888;transition:all 0.2s}
 .tabs button.active{background:rgba(50,55,60,0.15);color:#333}
 .input-body{flex:1;padding:14px 18px;overflow-y:auto;display:flex;flex-direction:column}
 #text-input{display:flex;flex-direction:column;flex:1}
@@ -36,10 +52,10 @@ textarea:focus{border-color:#32373c}
 textarea::placeholder{color:#999}
 .dropzone{flex:1;min-height:200px;border:2px dashed #ccc;border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;cursor:pointer;transition:all 0.2s;background:#fafafa}
 .dropzone:hover,.dropzone.dragover{border-color:#32373c;background:#f0f0f0}
-.dropzone-icon{font-size:36px;opacity:0.4}.dropzone-text{font-size:13px;color:rgba(180,170,220,0.5)}.dropzone-sub{font-size:11px;color:rgba(140,130,180,0.35)}
+.dropzone-icon{font-size:36px;opacity:0.4}.dropzone-text{font-size:13px;color:#888}.dropzone-sub{font-size:11px;color:#aaa}
 #file-name{margin-top:10px;font-size:12px;color:#32373c;display:none}
 #file-hidden{display:none}
-.analyse-section{padding:14px 18px;border-top:1px solid rgba(100,80,200,0.1)}
+.analyse-section{padding:14px 18px;border-top:1px solid #e0e0e0}
 #analyse-btn{width:100%;padding:12px;border:none;border-radius:8px;background:#32373c;color:#fff;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;transition:all 0.2s}
 #analyse-btn:hover{transform:translateY(-1px);box-shadow:0 4px 20px rgba(50,55,60,0.3)}
 #analyse-btn:disabled{opacity:0.4;cursor:not-allowed;transform:none;box-shadow:none}
@@ -57,8 +73,8 @@ textarea::placeholder{color:#999}
 #forceGraph{width:100%;height:100%;display:none;overflow:hidden}
 #empty-state{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;z-index:5}
 #empty-state.hidden{display:none}
-.empty-icon{font-size:60px;opacity:0.15}.empty-title{font-size:18px;font-weight:700;color:rgba(180,170,220,0.3)}.empty-sub{font-size:13px;color:rgba(140,130,180,0.25);max-width:300px;text-align:center;line-height:1.5}
-#toggle-panel{position:absolute;top:50%;left:0;transform:translateY(-50%);width:20px;height:50px;background:rgba(20,15,45,0.8);border:1px solid rgba(100,80,200,0.15);border-left:none;border-radius:0 6px 6px 0;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:15;color:rgba(180,170,220,0.5);font-size:12px}
+.empty-icon{font-size:60px;opacity:0.15}.empty-title{font-size:18px;font-weight:700;color:#bbb}.empty-sub{font-size:13px;color:#ccc;max-width:300px;text-align:center;line-height:1.5}
+#toggle-panel{position:absolute;top:50%;left:0;transform:translateY(-50%);width:20px;height:50px;background:#f0f0f0;border:1px solid #ddd;border-left:none;border-radius:0 6px 6px 0;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:15;color:#888;font-size:12px}
 #debug-view{display:none;position:absolute;inset:0;background:rgba(255,255,255,0.98);z-index:12;overflow:auto;padding:20px}
 #debug-view.active{display:block}
 #debug-view h3{color:#32373c;font-size:14px;margin-bottom:12px;font-weight:700}
@@ -89,6 +105,28 @@ textarea::placeholder{color:#999}
 .summary-table td{padding:7px 10px;border-bottom:1px solid #eee;color:#555}
 .summary-table tr:hover td{background:#f8f8f8}
 .summary-section{margin-bottom:24px}
+/* Mobile responsive */
+@media(max-width:768px){
+  #header{flex-wrap:wrap;padding:8px 12px;gap:8px}
+  .logo img{height:24px!important}
+  .header-right{width:100%;overflow-x:auto}
+  .switcher{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .switcher button{padding:5px 10px;font-size:11px;white-space:nowrap}
+  #main{flex-direction:column}
+  #input-panel{width:100%!important;max-height:45vh;flex-shrink:0;border-right:none;border-bottom:1px solid #e0e0e0}
+  #input-panel.collapsed{max-height:0;border-bottom:none}
+  .input-body{min-height:0}
+  textarea{min-height:120px}
+  .analyse-section{padding:10px 14px}
+  #toggle-panel{display:none}
+  #viz{min-height:50vh}
+  .summary-cards{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:480px){
+  .switcher button{padding:4px 8px;font-size:10px}
+  .summary-cards{grid-template-columns:1fr}
+  #input-panel{max-height:40vh}
+}
 </style>
 </head>
 <body>
@@ -675,10 +713,10 @@ function init3D() {
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));
   c.appendChild(renderer.domElement);
 
-  // Lighting — bright, even, for clean paper-map look
-  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-  const sun = new THREE.DirectionalLight(0xffffff, 0.8);
-  sun.position.set(8, 25, 5);
+  // Lighting — warm directional for terrain depth + soft ambient
+  scene.add(new THREE.AmbientLight(0xc8d8e8, 0.45));
+  const sun = new THREE.DirectionalLight(0xfff4e0, 1.0);
+  sun.position.set(10, 20, 8);
   sun.castShadow = true;
   sun.shadow.mapSize.width = 1024;
   sun.shadow.mapSize.height = 1024;
@@ -689,6 +727,9 @@ function init3D() {
   sun.shadow.camera.top = 20;
   sun.shadow.camera.bottom = -20;
   scene.add(sun);
+  const fill = new THREE.DirectionalLight(0x88aacc, 0.3);
+  fill.position.set(-6, 10, -8);
+  scene.add(fill);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -727,8 +768,9 @@ function init3D() {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
 
-    const terrainMesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
-        vertexColors: true, side: THREE.DoubleSide
+    const terrainMesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
+        vertexColors: true, shininess: 5, specular: 0x111111,
+        side: THREE.DoubleSide, flatShading: false
     }));
     terrainMesh.castShadow = true;
     terrainMesh.receiveShadow = true;
