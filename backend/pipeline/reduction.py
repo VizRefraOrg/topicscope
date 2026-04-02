@@ -110,7 +110,7 @@ def cluster_entities(coords_2d, n_entities):
     return labels
 
 
-def generate_heightmap(coords_2d, saliences, heights, grid_size=200):
+def generate_heightmap(coords_2d, saliences, heights, grid_size=300):
     """Generate terrain heightmap: individual Gaussian bumps per entity.
 
     Simple approach: each entity stamps its own Gaussian hill. Nearby entities
@@ -162,7 +162,7 @@ def generate_heightmap(coords_2d, saliences, heights, grid_size=200):
                     grid[py, px] = max(grid[py, px], val)  # MAX so bumps don't over-stack
 
     # Smoothing pass to eliminate visible polygon ridges
-    grid = gaussian_filter(grid, sigma=4.0)
+    grid = gaussian_filter(grid, sigma=6.0)
 
     # Simple normalize to [0, 1]
     gmax = grid.max()

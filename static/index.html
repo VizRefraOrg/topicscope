@@ -141,6 +141,7 @@ textarea::placeholder{color:#999}
       <button onclick="switchMode('fly')">Fly-Through</button>
       <button onclick="switchMode('force')">Force Graph</button>
       <button onclick="switchMode('debug')">Data Table</button>
+      <button onclick="switchMode('wire')">Wireframe</button>
       <button onclick="switchMode('summary')">Summary</button>
     </div>
     <div class="hint" id="hint"></div>
@@ -689,11 +690,84 @@ function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale
         ctx.fillText(lb.text, 128, 6 + (fontSize + 10) / 2);
 
         const tex = new THREE.CanvasTexture(canvas);
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: true }));
         sprite.position.set(lb.x, lb.y, lb.z);
         sprite.scale.set(spriteScale, spriteScale * 40 / 256, 1);
         scene.add(sprite);
     }
+}
+
+function initWireframe() {
+  const c = document.getElementById('container3d'), W = c.clientWidth, H = c.clientHeight;
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a0a0a);
+  const camera = new THREE.PerspectiveCamera(45, W/H, 0.1, 1000);
+  camera.position.set(0, 38, 14);
+  camera.lookAt(0,0,0);
+  const renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(W,H);
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  c.appendChild(renderer.domElement);
+
+  const terrainSize = 30, heightScale = 8;
+
+  if (HEIGHTMAP && HEIGHTMAP.heightmap) {
+    const gridN = HEIGHTMAP.grid_size;
+    // Use every 3rd vertex for sparser wireframe
+    const step = 3;
+    const segsX = Math.floor((gridN - 1) / step);
+    const segsY = Math.floor((gridN - 1) / step);
+    const geo = new THREE.PlaneGeometry(terrainSize, terrainSize, segsX, segsY);
+    geo.rotateX(-Math.PI / 2);
+    const verts = geo.attributes.position;
+    const colors = new Float32Array(verts.count * 3);
+
+    for (let i = 0; i < verts.count; i++) {
+        const ix = Math.round((i % (segsX + 1)) * step);
+        const iy = Math.round(Math.floor(i / (segsX + 1)) * step);
+        const cx = Math.min(ix, gridN - 1), cy = Math.min(iy, gridN - 1);
+        const h = HEIGHTMAP.heightmap[cy] ? (HEIGHTMAP.heightmap[cy][cx] || 0) : 0;
+        verts.setY(i, h < 0.01 ? 0 : h * heightScale);
+        // Green glow for wireframe: brighter at higher elevation
+        const g = 0.3 + h * 0.7;
+        colors[i * 3] = h * 0.2;
+        colors[i * 3 + 1] = g;
+        colors[i * 3 + 2] = h * 0.3;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+
+    const wireMesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        wireframe: true, vertexColors: true, transparent: true, opacity: 0.8
+    }));
+    scene.add(wireMesh);
+
+    // Labels (white text on black, no background)
+    for (const t of TOPICS) {
+        const gx = t.gridPos ? t.gridPos.gx : Math.floor(gridN / 2);
+        const gy = t.gridPos ? t.gridPos.gy : Math.floor(gridN / 2);
+        const worldX = (gx / (gridN - 1) - 0.5) * terrainSize;
+        const worldZ = (gy / (gridN - 1) - 0.5) * terrainSize;
+        const rawH = (HEIGHTMAP.heightmap[gy] && HEIGHTMAP.heightmap[gy][gx]) || 0;
+        if (rawH < 0.05) continue;
+        const terrainY = rawH * heightScale + 0.5;
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 256; canvas.height = 32;
+        ctx.font = 'bold 14px DM Sans, sans-serif';
+        ctx.fillStyle = '#00ff88';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const txt = t.label.length > 20 ? t.label.substring(0, 19) + '..' : t.label;
+        ctx.fillText(txt, 128, 16);
+        const tex = new THREE.CanvasTexture(canvas);
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+        sp.position.set(worldX, terrainY, worldZ);
+        sp.scale.set(3.5, 3.5 * 32 / 256, 1);
+        scene.add(sp);
+    }
+  }
+  return {scene, camera, renderer};
 }
 
 function init3D() {
@@ -946,11 +1020,11 @@ function renderSummary(){
 // ═══════════════════════════════════════════════════════════════════════
 // MODE SWITCHING
 // ═══════════════════════════════════════════════════════════════════════
-const hints={'2d':'Hover over entities · Scroll to zoom','3d':'Drag to orbit · Scroll to zoom','fly':'WASD move · Mouse look · Q/E altitude','force':'Drag nodes · Fisheye on hover','debug':'Entity data table','summary':'Analysis summary overview'};
+const hints={'2d':'Hover over entities · Scroll to zoom','3d':'Drag to orbit · Scroll to zoom','fly':'WASD move · Mouse look · Q/E altitude','force':'Drag nodes · Fisheye on hover','wire':'Drag to orbit · Scroll to zoom','debug':'Entity data table','summary':'Analysis summary overview'};
 function switchMode(mode){
   currentMode=mode;
   document.getElementById('hint').textContent=hints[mode]||'';
-  document.querySelectorAll('#mode-switcher button').forEach((b,i)=>b.classList.toggle('active',['2d','3d','fly','force','debug','summary'][i]===mode));
+  document.querySelectorAll('#mode-switcher button').forEach((b,i)=>b.classList.toggle('active',['2d','3d','fly','force','wire','debug','summary'][i]===mode));
   renderCurrent();
 }
 
@@ -967,8 +1041,19 @@ function renderCurrent(){
   if(currentMode==='2d'){document.getElementById('scatter2d').style.display='block';render2DScatter();return}
   if(currentMode==='force'){document.getElementById('forceGraph').style.display='block';renderForceGraph();return}
 
-  // 3D or fly — both use Three.js terrain
+  // 3D, fly, or wireframe — all use Three.js
   const c3=document.getElementById('container3d');c3.style.display='block';c3.innerHTML='';
+
+  if(currentMode==='wire'){
+    const{scene,camera,renderer}=initWireframe();
+    attachOrbit(camera,renderer.domElement);
+    orbit={drag:false,lx:0,ly:0,theta:.3,phi:.35,dist:40};updateOrbit(camera);
+    c3.focus();
+    function animW(){animFrame=requestAnimationFrame(animW);renderer.render(scene,camera)}animW();
+    window.onresize=()=>{camera.aspect=c3.clientWidth/c3.clientHeight;camera.updateProjectionMatrix();renderer.setSize(c3.clientWidth,c3.clientHeight)};
+    return;
+  }
+
   const{scene,camera,renderer}=init3D(); attachOrbit(camera,renderer.domElement); attachFly(camera,renderer.domElement);
   if(currentMode==='3d'){orbit={drag:false,lx:0,ly:0,theta:.3,phi:.35,dist:40};updateOrbit(camera)}
   else{camera.position.set(-12,6,18);camera.rotation.order='YXZ';camera.lookAt(0,3,0)}
