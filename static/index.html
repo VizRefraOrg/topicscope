@@ -728,11 +728,11 @@ function initWireframe() {
         const cx = Math.min(ix, gridN - 1), cy = Math.min(iy, gridN - 1);
         const h = HEIGHTMAP.heightmap[cy] ? (HEIGHTMAP.heightmap[cy][cx] || 0) : 0;
         verts.setY(i, h < 0.01 ? 0 : h * heightScale);
-        // Green glow for wireframe: brighter at higher elevation
-        const g = 0.3 + h * 0.7;
-        colors[i * 3] = h * 0.2;
-        colors[i * 3 + 1] = g;
-        colors[i * 3 + 2] = h * 0.3;
+        // Bright white-blue wireframe: brighter at higher elevation
+        const brightness = 0.4 + h * 0.6;
+        colors[i * 3] = brightness * 0.85;
+        colors[i * 3 + 1] = brightness * 0.92;
+        colors[i * 3 + 2] = brightness;
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
@@ -755,7 +755,7 @@ function initWireframe() {
         const ctx = canvas.getContext('2d');
         canvas.width = 256; canvas.height = 32;
         ctx.font = 'bold 14px DM Sans, sans-serif';
-        ctx.fillStyle = '#00ff88';
+        ctx.fillStyle = '#c0d8ff';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const txt = t.label.length > 20 ? t.label.substring(0, 19) + '..' : t.label;
@@ -938,8 +938,8 @@ function attachOrbit(cam, el) {
   updateOrbit(cam);
   el.addEventListener('mousedown', e=>{orbit.drag=true;orbit.lx=e.clientX;orbit.ly=e.clientY});
   el.addEventListener('mouseup', ()=>orbit.drag=false); el.addEventListener('mouseleave', ()=>orbit.drag=false);
-  el.addEventListener('mousemove', e=>{if(!orbit.drag||currentMode!=='3d')return;orbit.theta+=(e.clientX-orbit.lx)*.005;orbit.phi=Math.max(.1,Math.min(Math.PI*.48,orbit.phi-(e.clientY-orbit.ly)*.005));orbit.lx=e.clientX;orbit.ly=e.clientY;updateOrbit(cam)});
-  el.addEventListener('wheel', e=>{if(currentMode!=='3d')return;orbit.dist=Math.max(5,Math.min(50,orbit.dist+e.deltaY*.015));updateOrbit(cam);e.preventDefault()}, {passive:false});
+  el.addEventListener('mousemove', e=>{if(!orbit.drag||(currentMode!=='3d'&&currentMode!=='wire'))return;orbit.theta+=(e.clientX-orbit.lx)*.005;orbit.phi=Math.max(.1,Math.min(Math.PI*.48,orbit.phi-(e.clientY-orbit.ly)*.005));orbit.lx=e.clientX;orbit.ly=e.clientY;updateOrbit(cam)});
+  el.addEventListener('wheel', e=>{if(currentMode!=='3d'&&currentMode!=='wire')return;orbit.dist=Math.max(5,Math.min(50,orbit.dist+e.deltaY*.015));updateOrbit(cam);e.preventDefault()}, {passive:false});
 }
 const flyK={}, flyM={drag:false,x:0,y:0};
 function attachFly(cam, el) {
