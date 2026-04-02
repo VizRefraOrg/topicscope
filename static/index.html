@@ -617,7 +617,7 @@ function terrainColorSmooth(h) {
 }
 
 function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale, gridN, allEntityPositions) {
-    // Collect all label positions for overlap separation
+    // Collect labels at their ORIGINAL grid positions (no X/Z displacement)
     const labels = [];
 
     // Topic labels
@@ -629,7 +629,7 @@ function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale
         const rawH = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
         const terrainY = rawH < 0.001 ? 0.3 : rawH * heightScale + 0.6;
         const truncLabel = t.label.length > 22 ? t.label.substring(0, 21) + '..' : t.label;
-        labels.push({ text: truncLabel, x: worldX, y: terrainY, z: worldZ, major: t.height > 0.3, height: t.height });
+        labels.push({ text: truncLabel, x: worldX, y: terrainY, z: worldZ, major: t.height > 0.3 });
     }
 
     // NER entity labels
@@ -644,28 +644,20 @@ function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale
             const rawH = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
             const terrainY = rawH < 0.001 ? 0.15 : rawH * heightScale + 0.3;
             const truncName = ent.name.length > 20 ? ent.name.substring(0, 19) + '..' : ent.name;
-            labels.push({ text: truncName, x: worldX, y: terrainY, z: worldZ, major: false, height: 0 });
+            labels.push({ text: truncName, x: worldX, y: terrainY, z: worldZ, major: false });
         }
     }
 
-    // Overlap separation: push labels apart if too close (simple repulsion)
-    for (let pass = 0; pass < 5; pass++) {
-        for (let i = 0; i < labels.length; i++) {
-            for (let j = i + 1; j < labels.length; j++) {
-                const dx = labels[i].x - labels[j].x;
-                const dz = labels[i].z - labels[j].z;
-                const dist = Math.sqrt(dx * dx + dz * dz);
-                const minDist = 2.0; // minimum world units between labels
-                if (dist < minDist && dist > 0.01) {
-                    const push = (minDist - dist) * 0.3;
-                    const nx = dx / dist, nz = dz / dist;
-                    labels[i].x += nx * push;
-                    labels[i].z += nz * push;
-                    labels[j].x -= nx * push;
-                    labels[j].z -= nz * push;
-                    // Stagger Y to reduce visual overlap
-                    labels[j].y += 0.3;
-                }
+    // Y-only stacking: when labels share similar X,Z, stack them vertically
+    // Sort by Y descending so higher labels get placed first
+    labels.sort((a, b) => b.y - a.y);
+    for (let i = 0; i < labels.length; i++) {
+        for (let j = 0; j < i; j++) {
+            const dx = Math.abs(labels[i].x - labels[j].x);
+            const dz = Math.abs(labels[i].z - labels[j].z);
+            if (dx < 1.2 && dz < 1.2) {
+                // Same location — bump Y up by 0.5 units
+                labels[i].y = labels[j].y + 0.5;
             }
         }
     }
@@ -676,8 +668,8 @@ function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale
         const ctx = canvas.getContext('2d');
         canvas.width = 256; canvas.height = 40;
 
-        const fontSize = lb.major ? 16 : 12;
-        const spriteScale = lb.major ? 4.0 : 2.8;
+        const fontSize = lb.major ? 16 : 11;
+        const spriteScale = lb.major ? 4.0 : 2.5;
         const bgAlpha = lb.major ? 0.88 : 0.7;
 
         ctx.font = `${lb.major ? 'bold' : '600'} ${fontSize}px 'DM Sans', sans-serif`;
@@ -716,10 +708,10 @@ function init3D() {
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));
   c.appendChild(renderer.domElement);
 
-  // Lighting — even ambient + soft directional for smooth shading
-  scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-  const sun = new THREE.DirectionalLight(0xfff8f0, 0.6);
-  sun.position.set(10, 25, 10);
+  // Lighting — strong ambient to eliminate facet shadows on low-res mesh
+  scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+  const sun = new THREE.DirectionalLight(0xfff8f0, 0.4);
+  sun.position.set(10, 30, 10);
   sun.castShadow = true;
   sun.shadow.mapSize.width = 1024;
   sun.shadow.mapSize.height = 1024;

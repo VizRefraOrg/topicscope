@@ -161,8 +161,8 @@ def generate_heightmap(coords_2d, saliences, heights, grid_size=200):
                     val = h * np.exp(-dist_sq / (2 * r * r))
                     grid[py, px] = max(grid[py, px], val)  # MAX so bumps don't over-stack
 
-    # Light smoothing pass to remove grid artifacts
-    grid = gaussian_filter(grid, sigma=2.0)
+    # Smoothing pass to eliminate visible polygon ridges
+    grid = gaussian_filter(grid, sigma=4.0)
 
     # Simple normalize to [0, 1]
     gmax = grid.max()
