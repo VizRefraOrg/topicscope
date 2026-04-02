@@ -713,34 +713,47 @@ function initWireframe() {
 
   if (HEIGHTMAP && HEIGHTMAP.heightmap) {
     const gridN = HEIGHTMAP.grid_size;
-    // Use every 3rd vertex for sparser wireframe
-    const step = 3;
+    // Sparse wireframe — every 6th vertex for clean shape
+    const step = 6;
     const segsX = Math.floor((gridN - 1) / step);
     const segsY = Math.floor((gridN - 1) / step);
-    const geo = new THREE.PlaneGeometry(terrainSize, terrainSize, segsX, segsY);
-    geo.rotateX(-Math.PI / 2);
-    const verts = geo.attributes.position;
-    const colors = new Float32Array(verts.count * 3);
 
+    // Solid dark surface underneath (so you can't see through)
+    const solidGeo = new THREE.PlaneGeometry(terrainSize, terrainSize, segsX, segsY);
+    solidGeo.rotateX(-Math.PI / 2);
+    const solidVerts = solidGeo.attributes.position;
+    for (let i = 0; i < solidVerts.count; i++) {
+        const ix = Math.round((i % (segsX + 1)) * step);
+        const iy = Math.round(Math.floor(i / (segsX + 1)) * step);
+        const cx = Math.min(ix, gridN - 1), cy = Math.min(iy, gridN - 1);
+        const h = HEIGHTMAP.heightmap[cy] ? (HEIGHTMAP.heightmap[cy][cx] || 0) : 0;
+        solidVerts.setY(i, h < 0.01 ? 0 : h * heightScale);
+    }
+    solidGeo.computeVertexNormals();
+    scene.add(new THREE.Mesh(solidGeo, new THREE.MeshBasicMaterial({
+        color: 0x0a0a0a, side: THREE.DoubleSide
+    })));
+
+    // Wireframe overlay
+    const wireGeo = new THREE.PlaneGeometry(terrainSize, terrainSize, segsX, segsY);
+    wireGeo.rotateX(-Math.PI / 2);
+    const verts = wireGeo.attributes.position;
+    const colors = new Float32Array(verts.count * 3);
     for (let i = 0; i < verts.count; i++) {
         const ix = Math.round((i % (segsX + 1)) * step);
         const iy = Math.round(Math.floor(i / (segsX + 1)) * step);
         const cx = Math.min(ix, gridN - 1), cy = Math.min(iy, gridN - 1);
         const h = HEIGHTMAP.heightmap[cy] ? (HEIGHTMAP.heightmap[cy][cx] || 0) : 0;
-        verts.setY(i, h < 0.01 ? 0 : h * heightScale);
-        // Bright white-blue wireframe: brighter at higher elevation
-        const brightness = 0.4 + h * 0.6;
-        colors[i * 3] = brightness * 0.85;
-        colors[i * 3 + 1] = brightness * 0.92;
+        verts.setY(i, h < 0.01 ? 0 : h * heightScale + 0.02);
+        const brightness = 0.3 + h * 0.7;
+        colors[i * 3] = brightness * 0.8;
+        colors[i * 3 + 1] = brightness * 0.9;
         colors[i * 3 + 2] = brightness;
     }
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geo.computeVertexNormals();
-
-    const wireMesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-        wireframe: true, vertexColors: true, transparent: true, opacity: 0.8
-    }));
-    scene.add(wireMesh);
+    wireGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    scene.add(new THREE.Mesh(wireGeo, new THREE.MeshBasicMaterial({
+        wireframe: true, vertexColors: true
+    })));
 
     // Labels (white text on black, no background)
     for (const t of TOPICS) {
