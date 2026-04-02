@@ -617,87 +617,89 @@ function terrainColorSmooth(h) {
 }
 
 function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale, gridN, allEntityPositions) {
-    // Render main topic labels (larger, on peaks)
+    // Collect all label positions for overlap separation
+    const labels = [];
+
+    // Topic labels
     for (const t of topics) {
         const gx = t.gridPos ? t.gridPos.gx : Math.floor(gridN / 2);
         const gy = t.gridPos ? t.gridPos.gy : Math.floor(gridN / 2);
-        // PlaneGeometry vertex order: ix varies along X, iy varies along -Z
         const worldX = (gx / (gridN - 1) - 0.5) * terrainSize;
         const worldZ = (gy / (gridN - 1) - 0.5) * terrainSize;
         const rawH = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
-        const terrainY = rawH < 0.001 ? 0.3 : rawH * heightScale + 0.8;
-
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = 512; canvas.height = 72;
-
-        let fontSize, spriteScale, bgAlpha;
-        if (t.height > 0.5) {
-            fontSize = 30; spriteScale = 9; bgAlpha = 0.9;
-        } else if (t.height > 0.15) {
-            fontSize = 22; spriteScale = 6.5; bgAlpha = 0.8;
-        } else {
-            fontSize = 15; spriteScale = 4.5; bgAlpha = 0.65;
-        }
-
-        ctx.font = `bold ${fontSize}px 'DM Sans', sans-serif`;
-        const tm = ctx.measureText(t.label);
-        const bgW = Math.min(500, tm.width + 24);
-        const bgX = 256 - bgW / 2;
-        ctx.fillStyle = `rgba(255,255,250,${bgAlpha})`;
-        ctx.beginPath();
-        ctx.roundRect(bgX, 10, bgW, fontSize + 16, 8);
-        ctx.fill();
-        ctx.fillStyle = '#2a2a20';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(t.label, 256, 10 + (fontSize + 16) / 2);
-
-        const tex = new THREE.CanvasTexture(canvas);
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-        sprite.position.set(worldX, terrainY, worldZ);
-        sprite.scale.set(spriteScale, spriteScale * 72 / 512, 1);
-        scene.add(sprite);
+        const terrainY = rawH < 0.001 ? 0.3 : rawH * heightScale + 0.6;
+        const truncLabel = t.label.length > 22 ? t.label.substring(0, 21) + '..' : t.label;
+        labels.push({ text: truncLabel, x: worldX, y: terrainY, z: worldZ, major: t.height > 0.3, height: t.height });
     }
 
-    // Render non-topic NER entity labels (smaller, on shores)
-    if (!allEntityPositions || !allEntityPositions.length) return;
-    const topicNames = new Set(topics.map(t => t.label.toLowerCase()));
-    for (const ent of allEntityPositions) {
-        if (ent.is_topic) continue;
-        if (topicNames.has(ent.name.toLowerCase())) continue;
+    // NER entity labels
+    if (allEntityPositions && allEntityPositions.length) {
+        const topicNames = new Set(topics.map(t => t.label.toLowerCase()));
+        for (const ent of allEntityPositions) {
+            if (ent.is_topic || topicNames.has(ent.name.toLowerCase())) continue;
+            const gx = ent.grid_gx, gy = ent.grid_gy;
+            if (gx < 0 || gy < 0 || gy >= heightmapData.heightmap.length || gx >= heightmapData.heightmap[0].length) continue;
+            const worldX = (gx / (gridN - 1) - 0.5) * terrainSize;
+            const worldZ = (gy / (gridN - 1) - 0.5) * terrainSize;
+            const rawH = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
+            const terrainY = rawH < 0.001 ? 0.15 : rawH * heightScale + 0.3;
+            const truncName = ent.name.length > 20 ? ent.name.substring(0, 19) + '..' : ent.name;
+            labels.push({ text: truncName, x: worldX, y: terrainY, z: worldZ, major: false, height: 0 });
+        }
+    }
 
-        const gx = ent.grid_gx;
-        const gy = ent.grid_gy;
-        if (gx < 0 || gy < 0 || gy >= heightmapData.heightmap.length || gx >= heightmapData.heightmap[0].length) continue;
-        const worldX = (gx / (gridN - 1) - 0.5) * terrainSize;
-        const worldZ = (gy / (gridN - 1) - 0.5) * terrainSize;
-        const rawH = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
-        const terrainY = rawH < 0.001 ? 0.2 : rawH * heightScale + 0.4;
+    // Overlap separation: push labels apart if too close (simple repulsion)
+    for (let pass = 0; pass < 5; pass++) {
+        for (let i = 0; i < labels.length; i++) {
+            for (let j = i + 1; j < labels.length; j++) {
+                const dx = labels[i].x - labels[j].x;
+                const dz = labels[i].z - labels[j].z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                const minDist = 2.0; // minimum world units between labels
+                if (dist < minDist && dist > 0.01) {
+                    const push = (minDist - dist) * 0.3;
+                    const nx = dx / dist, nz = dz / dist;
+                    labels[i].x += nx * push;
+                    labels[i].z += nz * push;
+                    labels[j].x -= nx * push;
+                    labels[j].z -= nz * push;
+                    // Stagger Y to reduce visual overlap
+                    labels[j].y += 0.3;
+                }
+            }
+        }
+    }
 
+    // Render all labels
+    for (const lb of labels) {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        canvas.width = 512; canvas.height = 56;
+        canvas.width = 256; canvas.height = 40;
 
-        const fontSize = 17;
-        const spriteScale = 5.5;
-        ctx.font = `600 ${fontSize}px 'DM Sans', sans-serif`;
-        const tm = ctx.measureText(ent.name);
-        const bgW = Math.min(490, tm.width + 20);
-        const bgX = 256 - bgW / 2;
-        ctx.fillStyle = 'rgba(235,240,245,0.72)';
+        const fontSize = lb.major ? 16 : 12;
+        const spriteScale = lb.major ? 4.0 : 2.8;
+        const bgAlpha = lb.major ? 0.88 : 0.7;
+
+        ctx.font = `${lb.major ? 'bold' : '600'} ${fontSize}px 'DM Sans', sans-serif`;
+        const tm = ctx.measureText(lb.text);
+        const bgW = Math.min(250, tm.width + 14);
+        const bgX = 128 - bgW / 2;
+        ctx.fillStyle = `rgba(255,255,252,${bgAlpha})`;
         ctx.beginPath();
-        ctx.roundRect(bgX, 12, bgW, fontSize + 12, 5);
+        ctx.roundRect(bgX, 6, bgW, fontSize + 10, 5);
         ctx.fill();
-        ctx.fillStyle = '#3a3a35';
+        ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = '#333';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(ent.name, 256, 12 + (fontSize + 12) / 2);
+        ctx.fillText(lb.text, 128, 6 + (fontSize + 10) / 2);
 
         const tex = new THREE.CanvasTexture(canvas);
         const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-        sprite.position.set(worldX, terrainY, worldZ);
-        sprite.scale.set(spriteScale, spriteScale * 56 / 512, 1);
+        sprite.position.set(lb.x, lb.y, lb.z);
+        sprite.scale.set(spriteScale, spriteScale * 40 / 256, 1);
         scene.add(sprite);
     }
 }
@@ -714,10 +716,10 @@ function init3D() {
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));
   c.appendChild(renderer.domElement);
 
-  // Lighting — warm directional for terrain depth + soft ambient
-  scene.add(new THREE.AmbientLight(0xc8d8e8, 0.45));
-  const sun = new THREE.DirectionalLight(0xfff4e0, 1.0);
-  sun.position.set(10, 20, 8);
+  // Lighting — even ambient + soft directional for smooth shading
+  scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+  const sun = new THREE.DirectionalLight(0xfff8f0, 0.6);
+  sun.position.set(10, 25, 10);
   sun.castShadow = true;
   sun.shadow.mapSize.width = 1024;
   sun.shadow.mapSize.height = 1024;
@@ -769,8 +771,8 @@ function init3D() {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
 
-    const terrainMesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
-        vertexColors: true, shininess: 5, specular: 0x111111,
+    const terrainMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        vertexColors: true, roughness: 0.95, metalness: 0.0,
         side: THREE.DoubleSide, flatShading: false
     }));
     terrainMesh.castShadow = true;
