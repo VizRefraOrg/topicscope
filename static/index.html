@@ -106,8 +106,15 @@ textarea::placeholder{color:#999}
 .summary-table td{padding:7px 10px;border-bottom:1px solid #eee;color:#555}
 .summary-table tr:hover td{background:#f8f8f8}
 .summary-section{margin-bottom:24px}
+/* Footer */
+#site-footer{flex-shrink:0;background:#fafafa;border-top:1px solid #e0e0e0;padding:8px 20px;font-size:11px;color:#666;z-index:20}
+.footer-inner{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.footer-inner a{color:#32373c;text-decoration:none;font-weight:500}
+.footer-inner a:hover{text-decoration:underline}
 /* Mobile responsive */
 @media(max-width:768px){
+  #site-footer{padding:6px 12px;font-size:10px}
+  .footer-inner{gap:10px}
   #header{flex-wrap:wrap;padding:8px 12px;gap:8px}
   .logo img{height:24px!important}
   .header-right{width:100%;overflow-x:auto}
@@ -187,6 +194,14 @@ textarea::placeholder{color:#999}
     <div id="tooltip"></div>
   </div>
 </div>
+
+<footer id="site-footer">
+  <div class="footer-inner">
+    <span>&copy; VizRefra</span>
+    <a href="mailto:jqadan@vizrefra.com">jqadan@vizrefra.com</a>
+    <span>275 Alfred St N, North Sydney NSW 2060</span>
+  </div>
+</footer>
 
 <!-- D3 v4 (for d3.event, schemeCategory20) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/4.13.0/d3.min.js"></script>
