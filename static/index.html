@@ -10,6 +10,8 @@
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="https://vizrefra.com/">
 <link rel="icon" type="image/png" href="/static/favicon.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#32373c">
 <meta property="og:title" content="TopicScope — AI-Powered Text Visualization">
 <meta property="og:description" content="Transform text into interactive 3D terrain maps and topic landscapes. Powered by NLP, embeddings, and geographic-style visualization.">
 <meta property="og:type" content="website">
@@ -20,6 +22,12 @@
 <meta name="twitter:description" content="Transform unstructured text into 3D terrain maps, scatter plots, and force graphs.">
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"WebApplication","name":"TopicScope","description":"AI-powered text visualization tool that transforms unstructured text into interactive 3D terrain maps, 2D scatter plots, and force-directed graphs for topic discovery and entity analysis.","url":"https://vizrefra.com/","applicationCategory":"AnalyticsApplication","operatingSystem":"Web","creator":{"@type":"Organization","name":"VizRefra","url":"https://vizrefra.com"},"offers":{"@type":"Offer","price":"0","priceCurrency":"AUD"},"featureList":["3D Terrain Topic Visualization","2D Scatter Plot with Contour Density","Force-Directed Graph with Fisheye","Named Entity Recognition","AI-Powered Topic Discovery","File Upload (PDF, DOCX, TXT)"]}
+</script>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Organization","name":"VizRefra","legalName":"Qadan Analysis Consulting","url":"https://vizrefra.com","logo":"https://vizrefra.com/static/logo.png","description":"VizRefra builds visualization tools for unstructured data. TopicScope is its flagship product for text analysis and topic mapping.","foundingDate":"2026","contactPoint":[{"@type":"ContactPoint","contactType":"customer support","email":"jqadan@gmail.com","availableLanguage":["English"]}]}
+</script>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebSite","name":"TopicScope by VizRefra","url":"https://vizrefra.com/","publisher":{"@type":"Organization","name":"Qadan Analysis Consulting"}}
 </script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -136,6 +144,49 @@ textarea::placeholder{color:#999}
   #input-panel{max-height:40vh}
 }
 </style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "name": "VizRefra",
+  "legalName": "Qadan Analysis Consulting",
+  "url": "https://vizrefra.com",
+  "logo": "https://vizrefra.com/logo.png"
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "VizRefra",
+  "url": "https://vizrefra.com",
+  "description": "Text visualization for content teams and researchers — turn a corpus into a navigable topic map.",
+  "applicationCategory": "BusinessApplication",
+  "operatingSystem": "Web",
+  "offers": [
+    { "@type": "Offer", "name": "Free", "price": "0", "priceCurrency": "USD" },
+    { "@type": "Offer", "name": "Pro", "price": "29", "priceCurrency": "USD" }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What file formats does VizRefra accept?",
+      "acceptedAnswer": { "@type": "Answer", "text": "CSV, plain text, PDF, and DOCX. Transcripts from common tools (Otter, Rev, Descript) work as plain text." }
+    },
+    {
+      "@type": "Question",
+      "name": "How is VizRefra different from NVivo or Atlas.ti?",
+      "acceptedAnswer": { "@type": "Answer", "text": "NVivo and Atlas.ti are desktop products for academic coders. VizRefra is web-based and auto-generates themes — you review and refine rather than code from scratch." }
+    }
+  ]
+}
+</script>
 </head>
 <body>
 

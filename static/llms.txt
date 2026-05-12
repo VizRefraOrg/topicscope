@@ -1,0 +1,32 @@
+# VizRefra
+
+> Text visualization for content teams and researchers. Turn a corpus of articles, transcripts, or feedback into a navigable topic map — no Python required.
+
+VizRefra is a SaaS for content marketers, UX researchers, and academics who need to make sense of unstructured text fast. Upload articles, transcripts, support tickets, or survey responses; the app extracts themes, surfaces sentiment, and renders an interactive topic map. No code, no notebooks.
+
+## Audience
+
+- Content marketing teams analyzing competitor content
+- UX/CX researchers parsing interview transcripts and survey responses
+- Academics doing thematic analysis on qualitative data
+- Customer-success teams reading support ticket batches
+
+## What it does
+
+- Upload text (CSV, transcripts, PDFs) and get a topic map in 60 seconds
+- Sentiment + theme extraction with cited examples
+- Filter, group, and export themed segments
+- Compare two corpora side-by-side (e.g. before/after a change)
+
+## Pricing
+
+- Free: 1 project, 500 documents
+- Pro: unlimited projects, comparative analysis, exports
+
+## Links
+
+- [Homepage](https://vizrefra.com): Product overview
+
+## Contact
+
+- Founder: Jay Qadan (Qadan Analysis Consulting)
