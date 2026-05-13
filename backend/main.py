@@ -165,6 +165,39 @@ static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+
+def _serve_static_file(filename: str, media_type: str):
+    path = os.path.join(static_dir, filename)
+    if os.path.exists(path):
+        return FileResponse(path, media_type=media_type)
+    raise HTTPException(status_code=404, detail=f"{filename} not found")
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots_txt():
+    return _serve_static_file("robots.txt", "text/plain")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def sitemap_xml():
+    return _serve_static_file("sitemap.xml", "application/xml")
+
+
+@app.get("/llms.txt", include_in_schema=False)
+async def llms_txt():
+    return _serve_static_file("llms.txt", "text/plain")
+
+
+@app.get("/manifest.json", include_in_schema=False)
+async def manifest_json():
+    return _serve_static_file("manifest.json", "application/manifest+json")
+
+
+@app.get("/favicon.png", include_in_schema=False)
+async def favicon_png():
+    return _serve_static_file("favicon.png", "image/png")
+
+
 @app.get("/")
 async def serve_frontend():
     index_path = os.path.join(static_dir, "index.html")
