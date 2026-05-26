@@ -4,7 +4,7 @@ TopicScope Backend API
 
 import time
 import os
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -196,6 +196,38 @@ async def manifest_json():
 @app.get("/favicon.png", include_in_schema=False)
 async def favicon_png():
     return _serve_static_file("favicon.png", "image/png")
+
+
+@app.get("/blog", include_in_schema=False)
+async def blog_index():
+    """Simple index of blog posts — lists all .html files in static/blog/."""
+    blog_dir = os.path.join(static_dir, "blog")
+    if not os.path.isdir(blog_dir):
+        raise HTTPException(status_code=404, detail="no blog posts yet")
+    items = []
+    for fname in sorted(os.listdir(blog_dir)):
+        if fname.endswith(".html"):
+            slug = fname[:-5]
+            items.append(f'<li><a href="/blog/{slug}">{slug.replace("-", " ").title()}</a></li>')
+    html = f"""<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Blog | VizRefra</title>
+<meta name="description" content="VizRefra blog — text visualization and topic modeling insights.">
+<link rel="canonical" href="https://vizrefra.com/blog">
+</head><body><main><h1>Blog</h1><ul>{''.join(items) or '<li>No posts yet.</li>'}</ul></main></body></html>"""
+    return Response(content=html, media_type="text/html")
+
+
+@app.get("/blog/{slug}", include_in_schema=False)
+async def blog_post(slug: str):
+    """Serve a single blog post by canonical URL (no .html). Strips any .html suffix
+    a crawler accidentally appends, and prevents path-traversal."""
+    if "/" in slug or ".." in slug:
+        raise HTTPException(status_code=400, detail="invalid slug")
+    slug = slug.removesuffix(".html")
+    path = os.path.join(static_dir, "blog", f"{slug}.html")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="blog post not found")
+    return FileResponse(path, media_type="text/html")
 
 
 @app.get("/")
