@@ -4,12 +4,20 @@ TopicScope Backend API
 
 import time
 import os
-from fastapi import FastAPI, HTTPException, UploadFile, File, Response
+from fastapi import FastAPI, HTTPException, UploadFile, File, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from backend.config import settings
+
+
+def _is_blog_host(host: str) -> bool:
+    """True when the request came in on the blog.vizrefra.com subdomain.
+    Strips any port suffix (`:443`) and ignores case.
+    """
+    h = (host or "").split(":", 1)[0].lower()
+    return h == "blog.vizrefra.com"
 
 app = FastAPI(title="TopicScope API", version="1.0.0")
 
@@ -200,27 +208,34 @@ async def favicon_png():
 
 @app.get("/blog", include_in_schema=False)
 async def blog_index():
-    """Simple index of blog posts — lists all .html files in static/blog/."""
+    """Legacy path-based blog index on vizrefra.com/blog.
+    Prefer the prebuilt static/blog/index.html if present (built by scripts/build_blog_index.py);
+    fall back to a minimal in-memory listing for back-compat.
+    """
     blog_dir = os.path.join(static_dir, "blog")
+    prebuilt = os.path.join(blog_dir, "index.html")
+    if os.path.exists(prebuilt):
+        return FileResponse(prebuilt, media_type="text/html")
     if not os.path.isdir(blog_dir):
         raise HTTPException(status_code=404, detail="no blog posts yet")
     items = []
     for fname in sorted(os.listdir(blog_dir)):
-        if fname.endswith(".html"):
+        if fname.endswith(".html") and fname != "index.html":
             slug = fname[:-5]
-            items.append(f'<li><a href="/blog/{slug}">{slug.replace("-", " ").title()}</a></li>')
+            items.append(f'<li><a href="https://blog.vizrefra.com/{slug}">{slug.replace("-", " ").title()}</a></li>')
     html = f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><title>Blog | VizRefra</title>
 <meta name="description" content="VizRefra blog — text visualization and topic modeling insights.">
-<link rel="canonical" href="https://vizrefra.com/blog">
+<link rel="canonical" href="https://blog.vizrefra.com/">
 </head><body><main><h1>Blog</h1><ul>{''.join(items) or '<li>No posts yet.</li>'}</ul></main></body></html>"""
     return Response(content=html, media_type="text/html")
 
 
 @app.get("/blog/{slug}", include_in_schema=False)
 async def blog_post(slug: str):
-    """Serve a single blog post by canonical URL (no .html). Strips any .html suffix
-    a crawler accidentally appends, and prevents path-traversal."""
+    """Legacy single-post route at vizrefra.com/blog/{slug}. Kept for back-compat with
+    already-indexed URLs (posts published before the blog.vizrefra.com migration).
+    """
     if "/" in slug or ".." in slug:
         raise HTTPException(status_code=400, detail="invalid slug")
     slug = slug.removesuffix(".html")
@@ -231,8 +246,39 @@ async def blog_post(slug: str):
 
 
 @app.get("/")
-async def serve_frontend():
+async def serve_frontend(request: Request):
+    """If the request landed on blog.vizrefra.com, serve the blog index instead of the SPA."""
+    if _is_blog_host(request.headers.get("host", "")):
+        blog_index_path = os.path.join(static_dir, "blog", "index.html")
+        if os.path.exists(blog_index_path):
+            return FileResponse(blog_index_path, media_type="text/html")
+        return HTMLResponse(
+            "<!DOCTYPE html><html><head><title>Blog | VizRefra</title>"
+            "<link rel=\"canonical\" href=\"https://blog.vizrefra.com/\"></head>"
+            "<body><h1>Blog</h1><p>No posts yet.</p></body></html>",
+            media_type="text/html",
+        )
     index_path = os.path.join(static_dir, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
     return {"status": "ok", "service": "TopicScope API"}
+
+
+# IMPORTANT: register the host-aware /{slug} catch-all LAST so it can't shadow any
+# explicit route above (/api/*, /robots.txt, /sitemap.xml, /llms.txt, /manifest.json,
+# /favicon.png, /blog, /blog/{slug}). It is additionally guarded by `_is_blog_host`
+# so requests on vizrefra.com proper get a normal 404 instead of being eaten here.
+@app.get("/{slug}", include_in_schema=False)
+async def blog_subdomain_post(slug: str, request: Request):
+    """Serve `static/blog/{slug}.html` when the request came in on blog.vizrefra.com.
+    On any other host, return 404 so the main SPA's expected behaviour is preserved.
+    """
+    if not _is_blog_host(request.headers.get("host", "")):
+        raise HTTPException(status_code=404, detail="not found")
+    if "/" in slug or ".." in slug or "\\" in slug:
+        raise HTTPException(status_code=400, detail="invalid slug")
+    slug = slug.removesuffix(".html")
+    path = os.path.join(static_dir, "blog", f"{slug}.html")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="blog post not found")
+    return FileResponse(path, media_type="text/html")
