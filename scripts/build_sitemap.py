@@ -17,6 +17,7 @@ def main():
     now = datetime.utcnow().strftime("%Y-%m-%d")
     urls = [
         (f"{MAIN_URL}/", 1.0, "weekly"),
+        (f"{MAIN_URL}/about-jay", 0.6, "monthly"),
         (f"{BLOG_URL}/", 0.9, "weekly"),
     ]
     if BLOG_DIR.exists():

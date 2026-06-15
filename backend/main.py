@@ -201,6 +201,17 @@ async def manifest_json():
     return _serve_static_file("manifest.json", "application/manifest+json")
 
 
+@app.get("/about-jay", include_in_schema=False)
+async def about_jay():
+    """Author bio page for Jay Qadan. Served on both vizrefra.com and
+    blog.vizrefra.com so the `author_url` link in published-post frontmatter
+    resolves regardless of host."""
+    path = os.path.join(static_dir, "about-jay.html")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="about-jay not found")
+    return FileResponse(path, media_type="text/html")
+
+
 @app.get("/favicon.png", include_in_schema=False)
 async def favicon_png():
     return _serve_static_file("favicon.png", "image/png")
