@@ -31,7 +31,9 @@ def reduce_embeddings(embeddings, n_entities):
         coords_1d = pca.fit_transform(embeddings)
         return np.hstack([coords_1d, np.zeros((N, 1))])
 
-    if N < 5:
+    # t-SNE is unstable (and errors on perplexity >= N) with very few points,
+    # so small sets use a plain PCA layout instead.
+    if N < 8:
         n_comp = min(2, N - 1)
         pca = PCA(n_components=n_comp, random_state=42)
         coords = pca.fit_transform(embeddings)
@@ -45,7 +47,8 @@ def reduce_embeddings(embeddings, n_entities):
     reduced = pca.fit_transform(embeddings)
 
     # Stage 2: t-SNE to 2D
-    perplexity = max(5, min(30, N // 3))
+    # sklearn requires perplexity < n_samples
+    perplexity = min(30, max(5, N // 3), N - 1)
     tsne = TSNE(
         n_components=2,
         perplexity=perplexity,
