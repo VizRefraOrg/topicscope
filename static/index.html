@@ -77,7 +77,13 @@ textarea::placeholder{color:#999}
 #metadata.active{display:flex;gap:16px;flex-wrap:wrap}
 .meta-item span{color:#32373c;font-weight:600}
 #viz{flex:1;position:relative;background:#f5f5f5}
-#container3d{width:100%;height:100%;display:none;outline:none}
+#container3d{width:100%;height:100%;display:none;outline:none;position:relative;overflow:hidden}
+.t3d-labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.t3d-label{position:absolute;left:0;top:0;white-space:nowrap;font-family:'DM Sans',sans-serif;color:#1d2a33;background:rgba(255,255,255,.9);border-radius:999px;box-shadow:0 1px 4px rgba(20,40,60,.18);will-change:transform}
+.t3d-label::after{content:'';position:absolute;left:50%;top:100%;width:1px;height:8px;background:rgba(29,42,51,.45)}
+.t3d-tier0{font-size:13px;font-weight:700;padding:4px 10px}
+.t3d-tier1{font-size:11.5px;font-weight:600;padding:3px 8px}
+.t3d-tier2{font-size:10.5px;font-weight:500;padding:2px 7px;background:rgba(255,255,255,.75);color:#3a4750}
 #scatter2d{width:100%;height:100%;display:none;overflow:hidden}
 #forceGraph{width:100%;height:100%;display:none;overflow:hidden}
 #empty-state{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;z-index:5}
@@ -689,84 +695,159 @@ function terrainColorSmooth(h) {
     return stops[stops.length - 1];
 }
 
-function addTerrainLabels(scene, topics, heightmapData, terrainSize, heightScale, gridN, allEntityPositions) {
-    // Collect labels at their ORIGINAL grid positions (no X/Z displacement)
-    const labels = [];
+// ── Terrain look ────────────────────────────────────────────────────────
+// Heightmap values (0..1) below SEA_H sit under the water plane, so islands
+// meet the sea along a natural sloping shoreline instead of vertical walls.
+const SEA_H = 0.05;
 
-    // Topic labels
+function lerpStops(stops, h) {
+    if (h <= stops[0].t) return stops[0];
+    for (let i = 0; i < stops.length - 1; i++) {
+        const a = stops[i], b = stops[i + 1];
+        if (h <= b.t) {
+            const t = (h - a.t) / (b.t - a.t);
+            return { r: a.r + t * (b.r - a.r), g: a.g + t * (b.g - a.g), b: a.b + t * (b.b - a.b) };
+        }
+    }
+    return stops[stops.length - 1];
+}
+
+// sRGB colours by elevation: seabed → beach → greens → dry grass → rock → snow
+const SEABED_STOPS = [
+    { t: 0.00, r: 0.16, g: 0.36, b: 0.46 },
+    { t: 0.70, r: 0.36, g: 0.55, b: 0.55 },
+    { t: 1.00, r: 0.72, g: 0.70, b: 0.56 },
+];
+const LAND_STOPS = [
+    { t: 0.000, r: 0.86, g: 0.80, b: 0.60 },  // beach sand
+    { t: 0.035, r: 0.80, g: 0.77, b: 0.55 },
+    { t: 0.070, r: 0.47, g: 0.64, b: 0.31 },  // fresh green
+    { t: 0.250, r: 0.33, g: 0.54, b: 0.24 },  // forest green
+    { t: 0.450, r: 0.45, g: 0.53, b: 0.27 },  // olive
+    { t: 0.620, r: 0.60, g: 0.55, b: 0.37 },  // dry grass
+    { t: 0.760, r: 0.55, g: 0.47, b: 0.39 },  // brown rock
+    { t: 0.880, r: 0.68, g: 0.66, b: 0.64 },  // grey rock
+    { t: 0.960, r: 0.95, g: 0.96, b: 0.97 },  // snow
+    { t: 1.000, r: 0.98, g: 0.98, b: 0.99 },
+];
+const ROCK = { r: 0.52, g: 0.47, b: 0.42 };
+
+function terrainVertexColor(h, slope, jitter) {
+    let c;
+    if (h < SEA_H) {
+        c = lerpStops(SEABED_STOPS, h / SEA_H);
+    } else {
+        const land = (h - SEA_H) / (1 - SEA_H);
+        c = lerpStops(LAND_STOPS, land);
+        // steep faces show bare rock, but never on the beach or snow caps
+        if (land > 0.06 && land < 0.9) {
+            const k = Math.max(0, Math.min(1, (slope - 0.38) / 0.25)) * 0.65;
+            c = { r: c.r + (ROCK.r - c.r) * k, g: c.g + (ROCK.g - c.g) * k, b: c.b + (ROCK.b - c.b) * k };
+        }
+    }
+    const j = 1 + jitter;
+    return { r: c.r * j, g: c.g * j, b: c.b * j };
+}
+
+// Smooth value noise (cheap, deterministic) for subtle surface texture
+function hash2(x, y) {
+    const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return s - Math.floor(s);
+}
+function valueNoise(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const a = hash2(xi, yi), b = hash2(xi + 1, yi), c = hash2(xi, yi + 1), d = hash2(xi + 1, yi + 1);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+
+// Entities the backend placed out at sea get pulled onto the closest shore
+function nearestLand(hm, gx, gy) {
+    const N = hm.length, minH = SEA_H + 0.03;
+    if ((hm[gy] && hm[gy][gx]) >= minH) return { gx, gy };
+    for (let r = 2; r <= 60; r += 2) {
+        let best = null, bestD = Infinity;
+        for (let a = 0; a < 32; a++) {
+            const ang = a / 32 * Math.PI * 2;
+            const x = Math.round(gx + r * Math.cos(ang)), y = Math.round(gy + r * Math.sin(ang));
+            if (x < 0 || y < 0 || x >= N || y >= N || hm[y][x] < minH) continue;
+            const d = (x - gx) ** 2 + (y - gy) ** 2;
+            if (d < bestD) { bestD = d; best = { gx: x, gy: y }; }
+        }
+        if (best) return best;
+    }
+    return { gx, gy };
+}
+
+// ── Labels: crisp HTML overlay projected from 3D, with de-cluttering ─────
+function buildTerrainLabels(container, topics, heightmapData, terrainSize, heightScale, gridN, allEntityPositions) {
+    const hm = heightmapData.heightmap;
+    const toWorld = (gx, gy) => {
+        const h = (hm[gy] && hm[gy][gx]) || 0;
+        return {
+            x: (gx / (gridN - 1) - 0.5) * terrainSize,
+            z: (gy / (gridN - 1) - 0.5) * terrainSize,
+            y: Math.max(0, (h - SEA_H) * heightScale),
+        };
+    };
+
+    const items = [];
+    const maxH = Math.max(...topics.map(t => t.height || 0), 1e-6);
     for (const t of topics) {
-        const gx = t.gridPos ? t.gridPos.gx : Math.floor(gridN / 2);
-        const gy = t.gridPos ? t.gridPos.gy : Math.floor(gridN / 2);
-        const worldX = (gx / (gridN - 1) - 0.5) * terrainSize;
-        const worldZ = (gy / (gridN - 1) - 0.5) * terrainSize;
-        const rawH = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
-        const terrainY = rawH < 0.001 ? 0.3 : rawH * heightScale + 0.6;
-        const truncLabel = t.label.length > 22 ? t.label.substring(0, 21) + '..' : t.label;
-        labels.push({ text: truncLabel, x: worldX, y: terrainY, z: worldZ, major: t.height > 0.3 });
+        if (!t.gridPos) continue;
+        const p = toWorld(t.gridPos.gx, t.gridPos.gy);
+        const rel = (t.height || 0) / maxH;
+        items.push({ text: t.label, p, tier: rel > 0.6 ? 0 : 1, priority: 2 + rel + (t.size || 0) });
     }
-
-    // NER entity labels
     if (allEntityPositions && allEntityPositions.length) {
-        const topicNames = new Set(topics.map(t => t.label.toLowerCase()));
+        const seen = new Set(topics.map(t => t.label.toLowerCase()));
         for (const ent of allEntityPositions) {
-            if (ent.is_topic || topicNames.has(ent.name.toLowerCase())) continue;
+            const key = ent.name.toLowerCase();
+            if (ent.is_topic || seen.has(key)) continue;
+            seen.add(key);
             const gx = ent.grid_gx, gy = ent.grid_gy;
-            if (gx < 0 || gy < 0 || gy >= heightmapData.heightmap.length || gx >= heightmapData.heightmap[0].length) continue;
-            const worldX = (gx / (gridN - 1) - 0.5) * terrainSize;
-            const worldZ = (gy / (gridN - 1) - 0.5) * terrainSize;
-            const rawH = (heightmapData.heightmap[gy] && heightmapData.heightmap[gy][gx]) || 0;
-            const terrainY = rawH < 0.001 ? 0.15 : rawH * heightScale + 0.3;
-            const truncName = ent.name.length > 20 ? ent.name.substring(0, 19) + '..' : ent.name;
-            labels.push({ text: truncName, x: worldX, y: terrainY, z: worldZ, major: false });
+            if (gx < 0 || gy < 0 || gy >= hm.length || gx >= hm[0].length) continue;
+            const land = nearestLand(hm, gx, gy);
+            items.push({ text: ent.name, p: toWorld(land.gx, land.gy), tier: 2, priority: ent.salience || 0 });
         }
     }
 
-    // Y-only stacking: when labels share similar X,Z, stack them vertically
-    // Sort by Y descending so higher labels get placed first
-    labels.sort((a, b) => b.y - a.y);
-    for (let i = 0; i < labels.length; i++) {
-        for (let j = 0; j < i; j++) {
-            const dx = Math.abs(labels[i].x - labels[j].x);
-            const dz = Math.abs(labels[i].z - labels[j].z);
-            if (dx < 1.2 && dz < 1.2) {
-                // Same location — bump Y up by 0.5 units
-                labels[i].y = labels[j].y + 0.5;
-            }
+    const layer = document.createElement('div');
+    layer.className = 't3d-labels';
+    container.appendChild(layer);
+    for (const it of items) {
+        const el = document.createElement('div');
+        el.className = 't3d-label t3d-tier' + it.tier;
+        el.textContent = it.text.length > 32 ? it.text.slice(0, 30) + '…' : it.text;
+        el.title = it.text;
+        layer.appendChild(el);
+        it.el = el;
+        it.w = el.offsetWidth; it.h = el.offsetHeight;
+        it.anchor = new THREE.Vector3(it.p.x, it.p.y + 0.15, it.p.z);
+    }
+    // place high-priority labels first; lower ones hide when they would overlap
+    items.sort((a, b) => a.tier - b.tier || b.priority - a.priority);
+
+    const v = new THREE.Vector3();
+    return function update(camera) {
+        const W = container.clientWidth, H = container.clientHeight;
+        const placed = [];
+        for (const it of items) {
+            v.copy(it.anchor).project(camera);
+            const dist = camera.position.distanceTo(it.anchor);
+            if (v.z > 1 || v.x < -1.2 || v.x > 1.2 || v.y < -1.2 || v.y > 1.2) { it.el.style.display = 'none'; continue; }
+            const sx = (v.x + 1) / 2 * W, sy = (1 - v.y) / 2 * H;
+            const box = { l: sx - it.w / 2 - 3, r: sx + it.w / 2 + 3, t: sy - it.h - 10, b: sy };
+            let hit = false;
+            for (const q of placed) if (box.l < q.r && box.r > q.l && box.t < q.b && box.b > q.t) { hit = true; break; }
+            if (hit) { it.el.style.display = 'none'; continue; }
+            placed.push(box);
+            it.el.style.display = 'block';
+            it.el.style.transform = `translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px) translate(-50%, -100%)`;
+            it.el.style.opacity = Math.max(0.35, Math.min(1, 1.25 - dist / 80)).toFixed(2);
+            it.el.style.zIndex = String(1000 - Math.round(dist * 10));
         }
-    }
-
-    // Render all labels
-    for (const lb of labels) {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = 256; canvas.height = 40;
-
-        const fontSize = lb.major ? 16 : 11;
-        const spriteScale = lb.major ? 4.0 : 2.5;
-        const bgAlpha = lb.major ? 0.88 : 0.7;
-
-        ctx.font = `${lb.major ? 'bold' : '600'} ${fontSize}px 'DM Sans', sans-serif`;
-        const tm = ctx.measureText(lb.text);
-        const bgW = Math.min(250, tm.width + 14);
-        const bgX = 128 - bgW / 2;
-        ctx.fillStyle = `rgba(255,255,252,${bgAlpha})`;
-        ctx.beginPath();
-        ctx.roundRect(bgX, 6, bgW, fontSize + 10, 5);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(0,0,0,0.08)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.fillStyle = '#333';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(lb.text, 128, 6 + (fontSize + 10) / 2);
-
-        const tex = new THREE.CanvasTexture(canvas);
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: true }));
-        sprite.position.set(lb.x, lb.y, lb.z);
-        sprite.scale.set(spriteScale, spriteScale * 40 / 256, 1);
-        scene.add(sprite);
-    }
+    };
 }
 
 function initWireframe() {
@@ -857,91 +938,104 @@ function initWireframe() {
 
 function init3D() {
   const c = document.getElementById('container3d'), W = c.clientWidth, H = c.clientHeight;
+  const SKY = 0xdfe8ee;
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xF0F0F0);
+  scene.background = new THREE.Color(SKY);
+  scene.fog = new THREE.Fog(SKY, 55, 150);
   const camera = new THREE.PerspectiveCamera(45, W/H, 0.1, 1000);
   camera.position.set(0, 38, 14);
   camera.lookAt(0,0,0);
   const renderer = new THREE.WebGLRenderer({antialias:true});
   renderer.setSize(W,H);
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-  c.appendChild(renderer.domElement);
-
-  // Lighting — strong ambient to eliminate facet shadows on low-res mesh
-  scene.add(new THREE.AmbientLight(0xffffff, 0.85));
-  const sun = new THREE.DirectionalLight(0xfff8f0, 0.4);
-  sun.position.set(10, 30, 10);
-  sun.castShadow = true;
-  sun.shadow.mapSize.width = 1024;
-  sun.shadow.mapSize.height = 1024;
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 60;
-  sun.shadow.camera.left = -20;
-  sun.shadow.camera.right = 20;
-  sun.shadow.camera.top = 20;
-  sun.shadow.camera.bottom = -20;
-  scene.add(sun);
-  const fill = new THREE.DirectionalLight(0x88aacc, 0.3);
-  fill.position.set(-6, 10, -8);
-  scene.add(fill);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  c.appendChild(renderer.domElement);
+
+  // Lighting — soft sky fill + one low sun so the relief reads clearly
+  scene.add(new THREE.HemisphereLight(0xe8f2ff, 0x4f5d3e, 0.75));
+  const sun = new THREE.DirectionalLight(0xfff0d8, 1.35);
+  sun.position.set(-20, 24, 14);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 90;
+  sun.shadow.camera.left = -22; sun.shadow.camera.right = 22;
+  sun.shadow.camera.top = 22;   sun.shadow.camera.bottom = -22;
+  sun.shadow.bias = -0.0006;      // these two stop the striped "shadow acne"
+  sun.shadow.normalBias = 0.05;
+  sun.shadow.radius = 3;
+  scene.add(sun);
 
   const terrainSize = 30;
   const heightScale = 8;
+  let onFrame = null;
 
   if (HEIGHTMAP && HEIGHTMAP.heightmap) {
     const gridN = HEIGHTMAP.grid_size;
+    const hm = HEIGHTMAP.heightmap;
 
     const geo = new THREE.PlaneGeometry(terrainSize, terrainSize, gridN - 1, gridN - 1);
     geo.rotateX(-Math.PI / 2);
-
     const verts = geo.attributes.position;
-    const colors = new Float32Array(verts.count * 3);
 
-    // Simple: use heightmap values directly for color (already 0-1 from backend)
+    // Heights: continuous surface that dips below the water at the coast,
+    // with faint noise on land so slopes aren't plastic-smooth
+    const hv = new Float32Array(verts.count);
     for (let i = 0; i < verts.count; i++) {
-        const ix = i % gridN;
-        const iy = Math.floor(i / gridN);
-        const h = HEIGHTMAP.heightmap[iy][ix];
-        if (h < 0.01) {
-            // Flat at ocean level — closes island sides against the water
-            verts.setY(i, 0);
-            colors[i * 3]     = 0.22;
-            colors[i * 3 + 1] = 0.48;
-            colors[i * 3 + 2] = 0.65;
-        } else {
-            verts.setY(i, h * heightScale);
-            const col = terrainColorSmooth(h);
-            colors[i * 3]     = col.r;
-            colors[i * 3 + 1] = col.g;
-            colors[i * 3 + 2] = col.b;
-        }
+        const ix = i % gridN, iy = Math.floor(i / gridN);
+        const h = hm[iy][ix];
+        const land = Math.max(0, Math.min(1, (h - SEA_H) / 0.08));
+        const n = (valueNoise(ix / 9, iy / 9) - 0.5) * 0.10 + (valueNoise(ix / 3.5, iy / 3.5) - 0.5) * 0.04;
+        hv[i] = h;
+        verts.setY(i, (h - SEA_H) * heightScale + n * land);
     }
-
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
 
+    // Colours from elevation + slope (steep → rock), converted to linear space
+    const normals = geo.attributes.normal;
+    const colors = new Float32Array(verts.count * 3);
+    const tmp = new THREE.Color();
+    for (let i = 0; i < verts.count; i++) {
+        const ix = i % gridN, iy = Math.floor(i / gridN);
+        const slope = 1 - normals.getY(i);
+        const jitter = (valueNoise(ix / 2.2, iy / 2.2) - 0.5) * 0.10;
+        const col = terrainVertexColor(hv[i], slope, jitter);
+        tmp.setRGB(col.r, col.g, col.b).convertSRGBToLinear();
+        colors[i * 3] = tmp.r; colors[i * 3 + 1] = tmp.g; colors[i * 3 + 2] = tmp.b;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
     const terrainMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-        vertexColors: true, roughness: 0.95, metalness: 0.0,
-        side: THREE.DoubleSide, flatShading: false
+        vertexColors: true, roughness: 0.93, metalness: 0.0
     }));
     terrainMesh.castShadow = true;
     terrainMesh.receiveShadow = true;
     scene.add(terrainMesh);
 
-    // Ocean plane (blue, receives shadows)
-    const groundGeo = new THREE.PlaneGeometry(120, 120);
-    groundGeo.rotateX(-Math.PI / 2);
-    const groundMesh = new THREE.Mesh(groundGeo, new THREE.MeshPhongMaterial({
-        color: 0x3a7ca5, shininess: 60, specular: 0x4488aa, transparent: true, opacity: 0.9
-    }));
-    groundMesh.position.y = -0.02;
-    groundMesh.receiveShadow = true;
-    scene.add(groundMesh);
+    // Seabed beyond the terrain tile, so the sea floor never ends in a hard edge
+    const seabedCol = new THREE.Color(SEABED_STOPS[0].r, SEABED_STOPS[0].g, SEABED_STOPS[0].b).convertSRGBToLinear();
+    const seabed = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.MeshStandardMaterial({ color: seabedCol, roughness: 1 }));
+    seabed.rotation.x = -Math.PI / 2;
+    seabed.position.y = -SEA_H * heightScale - 0.01;
+    seabed.receiveShadow = true;
+    scene.add(seabed);
 
-    // Labels
-    addTerrainLabels(scene, TOPICS, HEIGHTMAP, terrainSize, heightScale, gridN, ALL_ENTITY_POSITIONS);
+    // Water: translucent, glossy, no shadows (avoids acne on a flat plane)
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.MeshPhongMaterial({
+        color: new THREE.Color(0x2f86c4).convertSRGBToLinear(),
+        specular: 0x6f97b5, shininess: 70,
+        transparent: true, opacity: 0.72, depthWrite: false
+    }));
+    water.rotation.x = -Math.PI / 2;
+    water.position.y = 0;
+    water.renderOrder = 1;
+    scene.add(water);
+
+    onFrame = buildTerrainLabels(c, TOPICS, HEIGHTMAP, terrainSize, heightScale, gridN, ALL_ENTITY_POSITIONS);
 
   } else {
     // ── Fallback: client-side heightmap generation ─────────────────
@@ -1011,7 +1105,7 @@ function init3D() {
 
   }
 
-  return {scene, camera, renderer};
+  return {scene, camera, renderer, onFrame};
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1109,7 +1203,7 @@ const hints={'2d':'Hover over entities · Scroll to zoom','3d':'Drag to orbit ·
 function switchMode(mode){
   currentMode=mode;
   document.getElementById('hint').textContent=hints[mode]||'';
-  document.querySelectorAll('#mode-switcher button').forEach((b,i)=>b.classList.toggle('active',['2d','3d','fly','force','wire','debug','summary'][i]===mode));
+  document.querySelectorAll('#mode-switcher button').forEach((b,i)=>b.classList.toggle('active',['2d','3d','fly','force','debug','wire','summary'][i]===mode));
   renderCurrent();
 }
 
@@ -1127,10 +1221,11 @@ function renderCurrent(){
   if(currentMode==='force'){document.getElementById('forceGraph').style.display='block';renderForceGraph();return}
 
   // 3D, fly, or wireframe — all use Three.js
+  if(window._t3dRenderer){window._t3dRenderer.dispose();if(window._t3dRenderer.forceContextLoss)window._t3dRenderer.forceContextLoss();window._t3dRenderer=null}
   const c3=document.getElementById('container3d');c3.style.display='block';c3.innerHTML='';
 
   if(currentMode==='wire'){
-    const{scene,camera,renderer}=initWireframe();
+    const{scene,camera,renderer}=initWireframe(); window._t3dRenderer=renderer;
     attachOrbit(camera,renderer.domElement);
     orbit={drag:false,lx:0,ly:0,theta:.3,phi:.35,dist:40};updateOrbit(camera);
     c3.focus();
@@ -1139,11 +1234,11 @@ function renderCurrent(){
     return;
   }
 
-  const{scene,camera,renderer}=init3D(); attachOrbit(camera,renderer.domElement); attachFly(camera,renderer.domElement);
+  const{scene,camera,renderer,onFrame}=init3D(); window._t3dRenderer=renderer; attachOrbit(camera,renderer.domElement); attachFly(camera,renderer.domElement);
   if(currentMode==='3d'){orbit={drag:false,lx:0,ly:0,theta:.3,phi:.35,dist:40};updateOrbit(camera)}
   else{camera.position.set(-12,6,18);camera.rotation.order='YXZ';camera.lookAt(0,3,0)}
   c3.focus();
-  function anim(){animFrame=requestAnimationFrame(anim);tickFly(camera);renderer.render(scene,camera)}anim();
+  function anim(){animFrame=requestAnimationFrame(anim);tickFly(camera);renderer.render(scene,camera);if(onFrame)onFrame(camera)}anim();
   window.onresize=()=>{camera.aspect=c3.clientWidth/c3.clientHeight;camera.updateProjectionMatrix();renderer.setSize(c3.clientWidth,c3.clientHeight)};
 }
 </script>
